@@ -1,3 +1,8 @@
+<p align="center">
+  <img src="assets/logo-variant1.png" width="300" alt="RamisScript Logo 1">
+  &nbsp; &nbsp; &nbsp;
+  <img src="assets/logo-variant2.png" width="300" alt="RamisScript Logo 2">
+</p>
 # RamisScript (RSMC) v0.7.0
 
 [English](#english) | [Русский](#русский)
