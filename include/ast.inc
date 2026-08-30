@@ -1,0 +1,78 @@
+AST_NODE_FUNC              = 1
+AST_NODE_SUB               = 2
+AST_NODE_BLOCK             = 3
+AST_NODE_LOOP              = 4
+AST_NODE_ASSIGN_IMM        = 5
+AST_NODE_ASSIGN_REG        = 6
+AST_NODE_LOAD_MEM          = 7
+AST_NODE_STORE_MEM         = 8
+AST_NODE_STORE_REG         = 9
+AST_NODE_BINOP_REG         = 10
+AST_NODE_BINOP_IMM         = 11
+AST_NODE_RETURN            = 12
+AST_NODE_SYSCALL           = 13
+AST_NODE_CMP_REG           = 14
+AST_NODE_CMP_IMM           = 15
+AST_NODE_JMP               = 16
+AST_NODE_JNE               = 17
+AST_NODE_JE                = 18
+AST_NODE_LABEL             = 19
+AST_NODE_PRINT_STR         = 20
+AST_NODE_CLI               = 21
+AST_NODE_STI               = 22
+AST_NODE_HLT               = 23
+AST_NODE_OUTB              = 24
+AST_NODE_SYS_WRITE         = 25
+AST_NODE_SYS_READ          = 26
+AST_NODE_SYS_EXIT          = 27
+AST_NODE_VAR_ASSIGN_IMM    = 28
+AST_NODE_VAR_ASSIGN_REG    = 29
+AST_NODE_REG_ASSIGN_VAR    = 30
+AST_NODE_CALL              = 31
+AST_NODE_SIMD_LOAD         = 32
+AST_NODE_SIMD_STORE        = 33
+AST_NODE_SIMD_BINOP        = 34
+AST_NODE_JB                = 35
+AST_NODE_JAE               = 36
+AST_NODE_JL                = 37
+AST_NODE_JLE               = 38
+AST_NODE_JG                = 39
+AST_NODE_JGE               = 40
+AST_NODE_JA                = 41
+AST_NODE_JBE               = 42
+AST_NODE_INB               = 43
+AST_NODE_INW               = 44
+AST_NODE_LOGIC_NOT         = 45
+AST_NODE_LOGIC_AND         = 46
+AST_NODE_LOGIC_OR          = 47
+AST_NODE_PAREN_EXPR        = 48
+AST_NODE_ENABLE_GC         = 49
+AST_NODE_GC_NEW            = 50
+AST_NODE_SAY               = 51
+AST_NODE_REPEAT            = 52
+AST_NODE_REPEAT_END        = 53
+AST_NODE_ENABLE_BLOCKS     = 54
+AST_NODE_INLINE_ASM        = 55
+AST_NODE_INLINE_C          = 56
+AST_NODE_INLINE_HEX        = 57
+AST_NODE_PUSH              = 58
+AST_NODE_POP               = 59
+
+OP_ADD                     = 1
+OP_SUB                     = 2
+OP_XOR                     = 3
+OP_AND                     = 4
+OP_SHR                     = 5
+OP_SHL                     = 6
+OP_MUL                     = 7
+
+struc AstNode {
+    .type   dd ?
+    .len    dd ?
+    .left   dq ?
+    .right  dq ?
+    .value  dq ?
+}
+virtual at 0
+    AstNode AstNode
+end virtual
