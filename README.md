@@ -1,7 +1,6 @@
 <p align="center">
-  <img src="assets/logo-variant1.png" width="300" alt="RamisScript Logo 1">
-  &nbsp; &nbsp; &nbsp;
-  <img src="assets/logo-variant2.png" width="300" alt="RamisScript Logo 2">
+  <img src="assets/logo-dark.jpg#gh-dark-mode-only" width="300" alt="RamisScript Logo">
+  <img src="assets/logo-light.jpg#gh-light-mode-only" width="300" alt="RamisScript Logo">
 </p>
 
 # RamisScript (RSMC) v0.7.0
