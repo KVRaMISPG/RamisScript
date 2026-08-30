@@ -1,0 +1,11 @@
+# Исключение графики и медиа-файлов из архивов и релизов
+*.jpg export-ignore
+*.png export-ignore
+*.svg export-ignore
+logo-dark.jpg export-ignore
+logo-light.jpg export-ignore
+assets/ export-ignore
+
+# Исключение файлов документации и скриптов установки из исходных пакетов
+.gitattributes export-ignore
+.gitignore export-ignore
