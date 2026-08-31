@@ -29,7 +29,7 @@ The compiler does not rely on C, LLVM, GNU Assembler, or external linkers. It di
 Prerequisites: Flat Assembler (`fasm`).
 
 ```bash
-git clone [https://github.com/KVRaMISPG/RamisScript.git](https://github.com/KVRaMISPG/RamisScript.git)
+git clone https://github.com/KVRaMISPG/RamisScript.git
 cd RamisScript
 chmod +x install.sh
 ./install.sh
