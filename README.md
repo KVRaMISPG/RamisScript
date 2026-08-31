@@ -128,7 +128,7 @@ end
 Требуется Flat Assembler (`fasm`).
 
 ```bash
-git clone [https://github.com/KVRaMISPG/RamisScript.git](https://github.com/KVRaMISPG/RamisScript.git)
+git clone https://github.com/KVRaMISPG/RamisScript.git
 cd RamisScript
 chmod +x install.sh
 ./install.sh
