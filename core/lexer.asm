@@ -20,6 +20,14 @@ dict_registers:
     db 3, "rbp", 5
     db 3, "rsi", 6
     db 3, "rdi", 7
+    db 2, "r8",  8
+    db 2, "r9",  9
+    db 3, "r10", 10
+    db 3, "r11", 11
+    db 3, "r12", 12
+    db 3, "r13", 13
+    db 3, "r14", 14
+    db 3, "r15", 15
     db 0
 
 dict_keywords:
@@ -53,10 +61,29 @@ dict_keywords:
     db 3, "sti"
     db 3, "hlt"
     db 4, "outb"
+    db 4, "outw"
+    db 4, "outd"
+    db 3, "ind"
+    db 4, "lidt"
+    db 4, "lgdt"
+    db 3, "cr0"
+    db 3, "cr2"
+    db 3, "cr3"
+    db 3, "cr4"
     db 3, "sys"
+    db 3, "net"
+    db 4, "send"
+    db 4, "recv"
     db 5, "write"
     db 4, "read"
     db 4, "exit"
+    db 6, "socket"
+    db 4, "bind"
+    db 6, "listen"
+    db 6, "accept"
+    db 5, "close"
+    db 4, "open"
+    db 8, "sendfile"
     db 6, "enable"
     db 2, "GC"
     db 3, "for"
@@ -66,9 +93,20 @@ dict_keywords:
     db 1, "C"
     db 3, "new"
     db 3, "say"
+    db 7, "say_num"
+    db 3, "cls"
+    db 4, "beep"
+    db 5, "sleep"
+    db 6, "locate"
+    db 5, "color"
+    db 6, "colour"
+    db 11, "hide_cursor"
+    db 11, "show_cursor"
     db 6, "repeat"
     db 4, "push"
     db 3, "pop"
+    db 3, "buf"
+    db 6, "struct"
     db 0
 
 is_alpha:
@@ -286,8 +324,15 @@ tokenize:
     jmp .str_loop
 .str_chk_t:
     cmp byte [rsi + 1], 't'
-    jne .str_put
+    jne .str_chk_0
     mov byte [r10], 0x09
+    inc r10
+    add rsi, 2
+    jmp .str_loop
+.str_chk_0:
+    cmp byte [rsi + 1], '0'
+    jne .str_put
+    mov byte [r10], 0
     inc r10
     add rsi, 2
     jmp .str_loop
@@ -301,8 +346,9 @@ tokenize:
     sub r9, r8
     cmp byte [rsi], '"'
     jne .write_str_tok
-    inc rsi
+    inc rsi                 
 .write_str_tok:
+    mov byte [r10], 0
     mov dword [rdi + Token.type], TOKEN_STRING
     mov dword [rdi + Token.len], r9d
     mov qword [rdi + Token.ptr], r8

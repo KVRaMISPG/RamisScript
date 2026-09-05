@@ -1,4 +1,44 @@
 align 8
+net_listen_template:
+    rol ax, 8
+    push rax
+    mov eax, 41
+    mov edi, 2
+    mov esi, 1
+    xor edx, edx
+    syscall
+    push rax
+    push 1
+    mov r8, rsp
+    mov r10d, 4
+    mov edx, 2
+    mov esi, 1
+    mov rdi, [rsp + 8]
+    mov eax, 54
+    syscall
+    pop rcx
+    sub rsp, 16
+    mov word [rsp], 2
+    mov cx, word [rsp + 24]
+    mov word [rsp + 2], cx
+    mov dword [rsp + 4], 0
+    mov qword [rsp + 8], 0
+    mov rdi, [rsp + 16]
+    mov rsi, rsp
+    mov edx, 16
+    mov eax, 49
+    syscall
+    add rsp, 16
+    mov rdi, [rsp]
+    mov esi, 128
+    mov eax, 50
+    syscall
+    pop rax
+    pop rcx
+net_listen_template_end:
+NET_LISTEN_SIZE = net_listen_template_end - net_listen_template
+
+align 8
 
 is_hex_char:
     xor ah, ah
@@ -155,6 +195,356 @@ decode_hex_byte:
     pop rax
     ret
 
+emit_load_syscall_arg:
+    push rbx
+    cmp al, 0
+    je .elsa_imm
+    cmp al, 1
+    je .elsa_reg
+    cmp al, 2
+    je .elsa_var
+    cmp al, 3
+    je .elsa_lea
+    pop rbx
+    ret
+
+.elsa_imm:
+    mov al, 0x48
+    cmp r8b, 8
+    jb .e_imm_no_rex
+    or al, 0x01
+.e_imm_no_rex:
+    mov byte [r13], al
+    inc r13
+    mov al, 0xB8
+    mov bl, r8b
+    and bl, 0x07
+    add al, bl
+    mov byte [r13], al
+    inc r13
+    mov qword [r13], rdx
+    add r13, 8
+    pop rbx
+    ret
+
+.elsa_reg:
+    mov al, 0x48
+    cmp dl, 8
+    jb .e_reg_chk_dst
+    or al, 0x04
+.e_reg_chk_dst:
+    cmp r8b, 8
+    jb .e_reg_emit_rex
+    or al, 0x01
+.e_reg_emit_rex:
+    mov byte [r13], al
+    inc r13
+    mov byte [r13], 0x89
+    inc r13
+    mov al, 0xC0
+    mov bl, dl
+    and bl, 0x07
+    shl bl, 3
+    or al, bl
+    mov bl, r8b
+    and bl, 0x07
+    or al, bl
+    mov byte [r13], al
+    inc r13
+    pop rbx
+    ret
+
+.elsa_var:
+    mov al, 0x48
+    cmp r8b, 8
+    jb .e_var_no_rex
+    or al, 0x04
+.e_var_no_rex:
+    mov byte [r13], al
+    inc r13
+    mov byte [r13], 0x8B
+    inc r13
+    mov al, 0x85
+    mov bl, r8b
+    and bl, 0x07
+    shl bl, 3
+    or al, bl
+    mov byte [r13], al
+    inc r13
+    neg rdx
+    mov dword [r13], edx
+    add r13, 4
+    pop rbx
+    ret
+
+.elsa_lea:
+    mov al, 0x48
+    cmp r8b, 8
+    jb .e_lea_no_rex
+    or al, 0x04
+.e_lea_no_rex:
+    mov byte [r13], al
+    inc r13
+    mov byte [r13], 0x8D
+    inc r13
+    mov al, 0x85
+    mov bl, r8b
+    and bl, 0x07
+    shl bl, 3
+    or al, bl
+    mov byte [r13], al
+    inc r13
+    neg rdx
+    mov dword [r13], edx
+    add r13, 4
+    pop rbx
+    ret
+
+emit_static_string:
+    mov byte [r13], 0xEB
+    inc r13
+    mov byte [r13], dl
+    inc r13
+
+    push rsi
+    push rdi
+    push rcx
+    mov rdi, r13
+    mov ecx, edx
+    rep movsb
+    mov r13, rdi
+    pop rcx
+    pop rdi
+    pop rsi
+
+    mov byte [r13], 0x48
+    inc r13
+    mov byte [r13], 0x8D
+    inc r13
+    mov byte [r13], 0x35
+    inc r13
+    mov eax, edx
+    neg eax
+    sub eax, 7
+    mov dword [r13], eax
+    add r13, 4
+
+    mov byte [r13], 0xB8
+    inc r13
+    mov dword [r13], 1
+    add r13, 4
+
+    mov byte [r13], 0xBF
+    inc r13
+    mov dword [r13], 1
+    add r13, 4
+
+    mov byte [r13], 0xBA
+    inc r13
+    mov dword [r13], edx
+    add r13, 4
+
+    mov word [r13], 0x050F
+    add r13, 2
+    ret
+
+get_color_escape_info:
+    mov rsi, qword [r12 + AstNode.value]
+    mov eax, dword [r12 + AstNode.len]
+    test eax, eax
+    jz .col_def
+
+    mov dl, byte [rsi]
+    cmp dl, 'r'
+    je .chk_r
+    cmp dl, 'g'
+    je .col_green
+    cmp dl, 'y'
+    je .col_yellow
+    cmp dl, 'b'
+    je .col_blue
+    cmp dl, 'm'
+    je .col_magenta
+    cmp dl, 'c'
+    je .col_cyan
+    cmp dl, 'w'
+    je .col_white
+    jmp .col_def
+
+.chk_r:
+    cmp eax, 3
+    je .col_red
+    jmp .col_def
+
+.col_red:
+    mov rsi, .str_col_red
+    mov edx, 5
+    ret
+.col_green:
+    mov rsi, .str_col_green
+    mov edx, 5
+    ret
+.col_yellow:
+    mov rsi, .str_col_yellow
+    mov edx, 5
+    ret
+.col_blue:
+    mov rsi, .str_col_blue
+    mov edx, 5
+    ret
+.col_magenta:
+    mov rsi, .str_col_magenta
+    mov edx, 5
+    ret
+.col_cyan:
+    mov rsi, .str_col_cyan
+    mov edx, 5
+    ret
+.col_white:
+    mov rsi, .str_col_white
+    mov edx, 5
+    ret
+.col_def:
+    mov rsi, .str_col_reset
+    mov edx, 4
+    ret
+
+.str_col_red:     db 1Bh, "[31m"
+.str_col_green:   db 1Bh, "[32m"
+.str_col_yellow:  db 1Bh, "[33m"
+.str_col_blue:    db 1Bh, "[34m"
+.str_col_magenta: db 1Bh, "[35m"
+.str_col_cyan:    db 1Bh, "[36m"
+.str_col_white:   db 1Bh, "[37m"
+.str_col_reset:   db 1Bh, "[0m"
+
+str_cls_seq:      db 1Bh, "[2J", 1Bh, "[H"
+str_beep_seq:     db 07h
+str_hide_cur_seq: db 1Bh, "[?25l"
+str_show_cur_seq: db 1Bh, "[?25h"
+
+sleep_code_template:
+    xor edx, edx
+    mov ecx, 1000
+    div rcx
+    imul rdx, rdx, 1000000
+    push rdx                  
+    push rax                  
+    mov rdi, rsp
+    xor esi, esi
+    mov eax, 35               
+    syscall
+    add rsp, 16
+sleep_code_template_end:
+SLEEP_CODE_SIZE = sleep_code_template_end - sleep_code_template
+
+say_num_code_template:
+    sub rsp, 32
+    lea rsi, [rsp + 31]
+    mov byte [rsi], 0x0A       
+    mov ecx, 1
+    mov r10, 10
+    xor r8d, r8d
+
+    test rax, rax
+    jns .sn_not_neg
+    neg rax
+    mov r8b, 1
+.sn_not_neg:
+    test rax, rax
+    jnz .sn_loop
+    dec rsi
+    mov byte [rsi], '0'
+    inc ecx
+    jmp .sn_check_sign
+
+.sn_loop:
+    test rax, rax
+    jz .sn_check_sign
+    xor edx, edx
+    div r10
+    add dl, '0'
+    dec rsi
+    mov byte [rsi], dl
+    inc ecx
+    jmp .sn_loop
+
+.sn_check_sign:
+    test r8b, r8b
+    jz .sn_write
+    dec rsi
+    mov byte [rsi], '-'
+    inc ecx
+
+.sn_write:
+    mov edx, ecx
+    mov edi, 1
+    mov eax, 1               
+    syscall
+    add rsp, 32
+say_num_code_template_end:
+SAY_NUM_CODE_SIZE = say_num_code_template_end - say_num_code_template
+
+locate_code_template:
+    push rax                  
+    sub rsp, 32
+    lea rsi, [rsp + 31]
+    mov byte [rsi], 'H'
+    mov r10, 10
+
+    mov rax, r8
+    test rax, rax
+    jnz .loc_x_loop
+    dec rsi
+    mov byte [rsi], '0'
+    jmp .loc_x_done
+.loc_x_loop:
+    test rax, rax
+    jz .loc_x_done
+    xor edx, edx
+    div r10
+    add dl, '0'
+    dec rsi
+    mov byte [rsi], dl
+    jmp .loc_x_loop
+.loc_x_done:
+
+    dec rsi
+    mov byte [rsi], ';'
+
+    mov rax, r9
+    test rax, rax
+    jnz .loc_y_loop
+    dec rsi
+    mov byte [rsi], '0'
+    jmp .loc_y_done
+.loc_y_loop:
+    test rax, rax
+    jz .loc_y_done
+    xor edx, edx
+    div r10
+    add dl, '0'
+    dec rsi
+    mov byte [rsi], dl
+    jmp .loc_y_loop
+.loc_y_done:
+
+    dec rsi
+    mov byte [rsi], '['
+    dec rsi
+    mov byte [rsi], 1Bh
+
+    mov rdx, rsp
+    add rdx, 32
+    sub rdx, rsi
+    mov edi, 1
+    mov eax, 1                
+    syscall
+    add rsp, 32
+    pop rax                   
+locate_code_template_end:
+LOCATE_CODE_SIZE = locate_code_template_end - locate_code_template
+
 generate_code:
     push rbp
     mov rbp, rsp
@@ -238,12 +628,28 @@ generate_code:
     je .p1_single_byte
     cmp eax, AST_NODE_HLT
     je .p1_single_byte
+
     cmp eax, AST_NODE_OUTB
     je .p1_outb
+    cmp eax, AST_NODE_OUTW
+    je .p1_outw
+    cmp eax, AST_NODE_OUTD
+    je .p1_outd
     cmp eax, AST_NODE_INB
     je .p1_inb
     cmp eax, AST_NODE_INW
     je .p1_inw
+    cmp eax, AST_NODE_IND
+    je .p1_ind
+    cmp eax, AST_NODE_MOV_TO_CR
+    je .p1_mov_cr
+    cmp eax, AST_NODE_MOV_FROM_CR
+    je .p1_mov_cr
+    cmp eax, AST_NODE_LIDT
+    je .p1_dt
+    cmp eax, AST_NODE_LGDT
+    je .p1_dt
+
     cmp eax, AST_NODE_LOGIC_NOT
     je .p1_logic_not
     cmp eax, AST_NODE_LOGIC_AND
@@ -274,20 +680,102 @@ generate_code:
     je .p1_single_byte
     cmp eax, AST_NODE_POP
     je .p1_single_byte
+    
+    cmp eax, AST_NODE_NET_LISTEN
+    je .p1_net_listen
+    cmp eax, AST_NODE_NET_ACCEPT
+    je .p1_net_accept
+    cmp eax, AST_NODE_NET_SEND
+    je .p1_sys_3args_gen
+    cmp eax, AST_NODE_NET_RECV
+    je .p1_sys_3args_gen
+    cmp eax, AST_NODE_NET_SENDFILE
+    je .p1_sys_sendfile
+    cmp eax, AST_NODE_NET_CLOSE
+    je .p1_sys_1arg_gen
     cmp eax, AST_NODE_SYS_WRITE
-    je .p1_sys_call3
+    je .p1_sys_3args_gen
     cmp eax, AST_NODE_SYS_READ
-    je .p1_sys_call3
+    je .p1_sys_3args_gen
+    cmp eax, AST_NODE_SYS_SOCKET
+    je .p1_sys_3args_gen
+    cmp eax, AST_NODE_SYS_BIND
+    je .p1_sys_3args_gen
+    cmp eax, AST_NODE_SYS_ACCEPT
+    je .p1_sys_3args_gen
+    cmp eax, AST_NODE_SYS_OPEN
+    je .p1_sys_3args_gen
+    cmp eax, AST_NODE_SYS_SENDFILE
+    je .p1_sys_sendfile
+    cmp eax, AST_NODE_SYS_LISTEN
+    je .p1_sys_2args_gen
+    cmp eax, AST_NODE_SYS_CLOSE
+    je .p1_sys_1arg_gen
     cmp eax, AST_NODE_SYS_EXIT
     je .p1_sys_exit
+    
+    cmp eax, AST_NODE_KIDS_CLS
+    je .p1_kids_cls
+    cmp eax, AST_NODE_KIDS_BEEP
+    je .p1_kids_beep
+    cmp eax, AST_NODE_KIDS_SLEEP
+    je .p1_kids_sleep
+    cmp eax, AST_NODE_KIDS_SAY_NUM
+    je .p1_kids_say_num
+    cmp eax, AST_NODE_KIDS_LOCATE
+    je .p1_kids_locate
+    cmp eax, AST_NODE_KIDS_COLOR
+    je .p1_kids_color
+    cmp eax, AST_NODE_KIDS_HIDE_CURSOR
+    je .p1_kids_hide_cur
+    cmp eax, AST_NODE_KIDS_SHOW_CURSOR
+    je .p1_kids_show_cur
+
     cmp eax, AST_NODE_VAR_ASSIGN_IMM
     je .p1_var_imm
     cmp eax, AST_NODE_VAR_ASSIGN_REG
     je .p1_var_reg
     cmp eax, AST_NODE_REG_ASSIGN_VAR
     je .p1_reg_var
+    cmp eax, 60
+    je .p1_lea_var
     cmp eax, AST_NODE_RETURN
     je .p1_return
+    jmp .p1_next
+
+.p1_kids_cls:
+    add r14, 33
+    jmp .p1_next
+.p1_kids_beep:
+    add r14, 27
+    jmp .p1_next
+.p1_kids_hide_cur:
+    add r14, 32
+    jmp .p1_next
+.p1_kids_show_cur:
+    add r14, 32
+    jmp .p1_next
+.p1_kids_color:
+    call get_color_escape_info
+    add r14, 26
+    add r14, rdx
+    jmp .p1_next
+.p1_kids_sleep:
+    mov edx, dword [r12 + AstNode.len]
+    call .add_sys_arg_size
+    add r14, SLEEP_CODE_SIZE
+    jmp .p1_next
+.p1_kids_say_num:
+    mov edx, dword [r12 + AstNode.len]
+    call .add_sys_arg_size
+    add r14, SAY_NUM_CODE_SIZE
+    jmp .p1_next
+.p1_kids_locate:
+    mov edx, dword [r12 + AstNode.len]
+    call .add_sys_arg_size
+    shr edx, 8
+    call .add_sys_arg_size
+    add r14, LOCATE_CODE_SIZE
     jmp .p1_next
 
 .p1_label:
@@ -315,7 +803,6 @@ generate_code:
 .p1_assign_reg:
     add r14, 3
     jmp .p1_next
-
 .p1_binop_reg:
     mov edx, dword [r12 + AstNode.len]
     cmp edx, OP_MUL
@@ -325,7 +812,6 @@ generate_code:
 .p1_binop_mul:
     add r14, 4
     jmp .p1_next
-
 .p1_binop_imm:
     mov edx, dword [r12 + AstNode.len]
     cmp edx, OP_SHR
@@ -337,7 +823,6 @@ generate_code:
 .p1_bi_shift:
     add r14, 4
     jmp .p1_next
-
 .p1_load_mem:
     mov r8, qword [r12 + AstNode.right]
     mov r9, qword [r12 + AstNode.value]
@@ -352,7 +837,6 @@ generate_code:
     add r14, 1
     add r14, rax
     jmp .p1_next
-
 .p1_store_mem:
     mov r8, qword [r12 + AstNode.left]
     mov r9, qword [r12 + AstNode.right]
@@ -379,7 +863,6 @@ generate_code:
     add r14, 5
     add r14, rax
     jmp .p1_next
-
 .p1_store_reg:
     mov r8, qword [r12 + AstNode.left]
     mov r9, qword [r12 + AstNode.value]
@@ -396,7 +879,6 @@ generate_code:
     add r14, 1
     add r14, rax
     jmp .p1_next
-
 .p1_simd_load:
     mov r8, qword [r12 + AstNode.right]
     mov r9, qword [r12 + AstNode.value]
@@ -404,7 +886,6 @@ generate_code:
     add r14, 2
     add r14, rax
     jmp .p1_next
-
 .p1_simd_store:
     mov r8, qword [r12 + AstNode.left]
     mov r9, qword [r12 + AstNode.value]
@@ -412,11 +893,9 @@ generate_code:
     add r14, 2
     add r14, rax
     jmp .p1_next
-
 .p1_simd_binop:
     add r14, 3
     jmp .p1_next
-
 .p1_syscall:
     add r14, 2
     jmp .p1_next
@@ -443,14 +922,73 @@ generate_code:
 .p1_single_byte:
     add r14, 1
     jmp .p1_next
+
 .p1_outb:
-    add r14, 7
+    mov edx, dword [r12 + AstNode.len]
+    test edx, edx
+    jz .p1_ob_lit
+    add r14, 1                
     jmp .p1_next
+.p1_ob_lit:
+    add r14, 7                
+    jmp .p1_next
+
+.p1_outw:
+    mov edx, dword [r12 + AstNode.len]
+    test edx, edx
+    jz .p1_ow_lit
+    add r14, 2               
+    jmp .p1_next
+.p1_ow_lit:
+    add r14, 8
+    jmp .p1_next
+
+.p1_outd:
+    mov edx, dword [r12 + AstNode.len]
+    test edx, edx
+    jz .p1_od_lit
+    add r14, 1               
+    jmp .p1_next
+.p1_od_lit:
+    add r14, 8
+    jmp .p1_next
+
 .p1_inb:
+    mov edx, dword [r12 + AstNode.len]
+    test edx, edx
+    jz .p1_ib_lit
+    add r14, 5                 
+    jmp .p1_next
+.p1_ib_lit:
     add r14, 9
     jmp .p1_next
+
 .p1_inw:
+    mov edx, dword [r12 + AstNode.len]
+    test edx, edx
+    jz .p1_iw_lit
+    add r14, 6               
+    jmp .p1_next
+.p1_iw_lit:
     add r14, 10
+    jmp .p1_next
+
+.p1_ind:
+    mov edx, dword [r12 + AstNode.len]
+    test edx, edx
+    jz .p1_id_lit
+    add r14, 4               
+    jmp .p1_next
+.p1_id_lit:
+    add r14, 8
+    jmp .p1_next
+
+.p1_mov_cr:
+    add r14, 3               
+    jmp .p1_next
+
+.p1_dt:
+    add r14, 7             
     jmp .p1_next
 
 .p1_logic_not:
@@ -471,7 +1009,6 @@ generate_code:
 .p1_pe_mul:
     add r14, 7
     jmp .p1_next
-
 .p1_enable_gc:
     add r14, 20
     jmp .p1_next
@@ -484,25 +1021,21 @@ generate_code:
 .p1_gn_rax:
     add r14, 33
     jmp .p1_next
-
 .p1_say:
     mov eax, dword [r12 + AstNode.len]
     add r14, 27
     add r14, rax
     jmp .p1_next
-
 .p1_repeat:
     mov qword [r12 + AstNode.left], r14
     add r14, 11
     jmp .p1_next
-
 .p1_repeat_end:
     mov r8, qword [r12 + AstNode.left]
     mov rax, qword [r8 + AstNode.left]
     mov qword [r12 + AstNode.value], rax
     add r14, 20
     jmp .p1_next
-
 .p1_skip:
     jmp .p1_next
 
@@ -550,7 +1083,7 @@ generate_code:
     lodsb
     dec ecx
     cmp al, 0x0A
-    je .p1_wait_h2
+    je .wait_second
     jmp .p1_hex_comment2
 
 .p1_hex_done:
@@ -562,14 +1095,72 @@ generate_code:
 .p1_inline_asm:
     add r14, 50
     jmp .p1_next
-
 .p1_inline_c:
     add r14, 50
     jmp .p1_next
 
-.p1_sys_call3:
-    add r14, 18
+.p1_net_listen:
+    mov edx, dword [r12 + AstNode.len]
+    call .add_sys_arg_size
+    add r14, NET_LISTEN_SIZE
     jmp .p1_next
+
+.p1_net_accept:
+    mov edx, dword [r12 + AstNode.len]
+    call .add_sys_arg_size
+    add r14, 11
+    jmp .p1_next
+
+.p1_sys_3args_gen:
+    mov edx, dword [r12 + AstNode.len]
+    call .add_sys_arg_size
+    shr edx, 8
+    call .add_sys_arg_size
+    shr edx, 8
+    call .add_sys_arg_size
+    add r14, 7
+    jmp .p1_next
+
+.p1_sys_sendfile:
+    mov edx, dword [r12 + AstNode.len]
+    call .add_sys_arg_size
+    shr edx, 8
+    call .add_sys_arg_size
+    shr edx, 8
+    call .add_sys_arg_size
+    add r14, 9
+    jmp .p1_next
+
+.p1_sys_2args_gen:
+    mov edx, dword [r12 + AstNode.len]
+    call .add_sys_arg_size
+    shr edx, 8
+    call .add_sys_arg_size
+    add r14, 7
+    jmp .p1_next
+
+.p1_sys_1arg_gen:
+    mov edx, dword [r12 + AstNode.len]
+    call .add_sys_arg_size
+    add r14, 7
+    jmp .p1_next
+
+.add_sys_arg_size:
+    mov al, dl
+    and al, 0xFF
+    cmp al, 0
+    je .sas_imm
+    cmp al, 1
+    je .sas_reg
+    add r14, 7
+    ret
+.sas_imm:
+    add r14, 10
+    ret
+.sas_reg:
+    add r14, 3
+    ret
+
 .p1_sys_exit:
     mov rax, qword [r12 + AstNode.left]
     test rax, rax
@@ -579,7 +1170,6 @@ generate_code:
 .p1_se_reg:
     add r14, 10
     jmp .p1_next
-
 .p1_var_imm:
     mov edx, dword [r12 + AstNode.len]
     cmp edx, 1
@@ -599,7 +1189,6 @@ generate_code:
 .p1_vi4:
     add r14, 10
     jmp .p1_next
-
 .p1_var_reg:
     mov edx, dword [r12 + AstNode.len]
     cmp edx, 1
@@ -619,7 +1208,6 @@ generate_code:
 .p1_vr4:
     add r14, 6
     jmp .p1_next
-
 .p1_reg_var:
     mov edx, dword [r12 + AstNode.len]
     cmp edx, 1
@@ -639,16 +1227,16 @@ generate_code:
 .p1_rv4:
     add r14, 6
     jmp .p1_next
-
-.p1_return:
-    add r14, 5
+.p1_lea_var:
+    add r14, 7
     jmp .p1_next
-
+.p1_return:
+    add r14, 9
+    jmp .p1_next
 .p1_next:
     add r12, 32
     dec rcx
     jmp .pass1_loop
-
 .pass1_done:
     pop rcx
     pop r13
@@ -722,12 +1310,29 @@ generate_code:
     je .emit_sti
     cmp eax, AST_NODE_HLT
     je .emit_hlt
+
+    ; mode "osdev"
     cmp eax, AST_NODE_OUTB
     je .emit_outb
+    cmp eax, AST_NODE_OUTW
+    je .emit_outw
+    cmp eax, AST_NODE_OUTD
+    je .emit_outd
     cmp eax, AST_NODE_INB
     je .emit_inb
     cmp eax, AST_NODE_INW
     je .emit_inw
+    cmp eax, AST_NODE_IND
+    je .emit_ind
+    cmp eax, AST_NODE_MOV_TO_CR
+    je .emit_mov_to_cr
+    cmp eax, AST_NODE_MOV_FROM_CR
+    je .emit_mov_from_cr
+    cmp eax, AST_NODE_LIDT
+    je .emit_lidt
+    cmp eax, AST_NODE_LGDT
+    je .emit_lgdt
+
     cmp eax, AST_NODE_LOGIC_NOT
     je .emit_logic_not
     cmp eax, AST_NODE_LOGIC_AND
@@ -758,20 +1363,161 @@ generate_code:
     je .emit_push
     cmp eax, AST_NODE_POP
     je .emit_pop
+
+    ; mode "sys"
+    ; mode "net"
+    cmp eax, AST_NODE_NET_LISTEN
+    je .emit_net_listen
+    cmp eax, AST_NODE_NET_ACCEPT
+    je .emit_net_accept
+    cmp eax, AST_NODE_NET_SEND
+    je .emit_sys_write
+    cmp eax, AST_NODE_NET_RECV
+    je .emit_sys_read
+    cmp eax, AST_NODE_NET_SENDFILE
+    je .emit_sys_sendfile
+    cmp eax, AST_NODE_NET_CLOSE
+    je .emit_sys_close
     cmp eax, AST_NODE_SYS_WRITE
     je .emit_sys_write
     cmp eax, AST_NODE_SYS_READ
     je .emit_sys_read
+    cmp eax, AST_NODE_SYS_SOCKET
+    je .emit_sys_socket
+    cmp eax, AST_NODE_SYS_BIND
+    je .emit_sys_bind
+    cmp eax, AST_NODE_SYS_LISTEN
+    je .emit_sys_listen
+    cmp eax, AST_NODE_SYS_ACCEPT
+    je .emit_sys_accept
+    cmp eax, AST_NODE_SYS_CLOSE
+    je .emit_sys_close
+    cmp eax, AST_NODE_SYS_OPEN
+    je .emit_sys_open
+    cmp eax, AST_NODE_SYS_SENDFILE
+    je .emit_sys_sendfile
     cmp eax, AST_NODE_SYS_EXIT
     je .emit_sys_exit
+
+    ; mode "kids"
+    cmp eax, AST_NODE_KIDS_CLS
+    je .emit_kids_cls
+    cmp eax, AST_NODE_KIDS_BEEP
+    je .emit_kids_beep
+    cmp eax, AST_NODE_KIDS_SLEEP
+    je .emit_kids_sleep
+    cmp eax, AST_NODE_KIDS_SAY_NUM
+    je .emit_kids_say_num
+    cmp eax, AST_NODE_KIDS_LOCATE
+    je .emit_kids_locate
+    cmp eax, AST_NODE_KIDS_COLOR
+    je .emit_kids_color
+    cmp eax, AST_NODE_KIDS_HIDE_CURSOR
+    je .emit_kids_hide_cur
+    cmp eax, AST_NODE_KIDS_SHOW_CURSOR
+    je .emit_kids_show_cur
+
     cmp eax, AST_NODE_VAR_ASSIGN_IMM
     je .emit_var_imm
     cmp eax, AST_NODE_VAR_ASSIGN_REG
     je .emit_var_reg
     cmp eax, AST_NODE_REG_ASSIGN_VAR
     je .emit_reg_var
+    cmp eax, 60
+    je .emit_lea_var
     cmp eax, AST_NODE_RETURN
     je .emit_epilogue
+    jmp .cg_next
+
+.emit_kids_cls:
+    mov rsi, str_cls_seq
+    mov edx, 7
+    call emit_static_string
+    jmp .cg_next
+
+.emit_kids_beep:
+    mov rsi, str_beep_seq
+    mov edx, 1
+    call emit_static_string
+    jmp .cg_next
+
+.emit_kids_hide_cur:
+    mov rsi, str_hide_cur_seq
+    mov edx, 6
+    call emit_static_string
+    jmp .cg_next
+
+.emit_kids_show_cur:
+    mov rsi, str_show_cur_seq
+    mov edx, 6
+    call emit_static_string
+    jmp .cg_next
+
+.emit_kids_color:
+    call get_color_escape_info
+    call emit_static_string
+    jmp .cg_next
+
+.emit_kids_sleep:
+    mov al, byte [r12 + AstNode.len]
+    mov rdx, qword [r12 + AstNode.value]
+    mov r8b, 0                
+    call emit_load_syscall_arg
+
+    push rdi
+    mov rdi, r13
+    push rsi
+    push rcx
+    mov rsi, sleep_code_template
+    mov ecx, SLEEP_CODE_SIZE
+    rep movsb
+    pop rcx
+    pop rsi
+    mov r13, rdi
+    pop rdi
+    jmp .cg_next
+
+.emit_kids_say_num:
+    mov al, byte [r12 + AstNode.len]
+    mov rdx, qword [r12 + AstNode.value]
+    mov r8b, 0                
+    call emit_load_syscall_arg
+
+    push rdi
+    mov rdi, r13
+    push rsi
+    push rcx
+    mov rsi, say_num_code_template
+    mov ecx, SAY_NUM_CODE_SIZE
+    rep movsb
+    pop rcx
+    pop rsi
+    mov r13, rdi
+    pop rdi
+    jmp .cg_next
+
+.emit_kids_locate:
+    mov al, byte [r12 + AstNode.len]
+    mov rdx, qword [r12 + AstNode.left]
+    mov r8b, 8
+    call emit_load_syscall_arg
+
+    mov al, byte [r12 + AstNode.len + 1]
+    mov rdx, qword [r12 + AstNode.right]
+    mov r8b, 9
+    call emit_load_syscall_arg
+
+    push rdi
+    mov rdi, r13
+    push rsi
+    push rcx
+    mov rsi, locate_code_template
+    mov ecx, LOCATE_CODE_SIZE
+    rep movsb
+    pop rcx
+    pop rsi
+    mov r13, rdi
+    pop rdi
     jmp .cg_next
 
 .emit_push:
@@ -804,10 +1550,18 @@ generate_code:
     jmp .cg_next
 
 .emit_assign_imm:
-    mov byte [r13], 0x48
+    mov al, 0x48
+    mov dl, byte [r12 + AstNode.len]
+    cmp dl, 8
+    jb .eai_no_rex_b
+    or al, 0x01
+.eai_no_rex_b:
+    mov byte [r13], al
     inc r13
     mov al, 0xB8
-    add al, byte [r12 + AstNode.len]
+    mov dl, byte [r12 + AstNode.len]
+    and dl, 0x07
+    add al, dl
     mov byte [r13], al
     inc r13
     mov rax, qword [r12 + AstNode.value]
@@ -816,63 +1570,100 @@ generate_code:
     jmp .cg_next
 
 .emit_assign_reg:
-    mov byte [r13], 0x48
+    mov al, 0x48
+    mov dl, byte [r12 + AstNode.value]
+    cmp dl, 8
+    jb .ear_chk_dst
+    or al, 0x04
+.ear_chk_dst:
+    mov dl, byte [r12 + AstNode.len]
+    cmp dl, 8
+    jb .ear_emit_rex
+    or al, 0x01
+.ear_emit_rex:
+    mov byte [r13], al
     inc r13
     mov byte [r13], 0x89
     inc r13
     mov al, 0xC0
     mov dl, byte [r12 + AstNode.value]
+    and dl, 0x07
     shl dl, 3
     or al, dl
-    or al, byte [r12 + AstNode.len]
+    mov dl, byte [r12 + AstNode.len]
+    and dl, 0x07
+    or al, dl
     mov byte [r13], al
     inc r13
     jmp .cg_next
 
 .emit_binop_reg:
     mov edx, dword [r12 + AstNode.len]
+    cmp edx, OP_MUL
+    je .emit_mul_r
+
+    mov al, 0x48
+    mov dl, byte [r12 + AstNode.right] 
+    cmp dl, 8
+    jb .ebr_chk_dst
+    or al, 0x04          
+.ebr_chk_dst:
+    mov dl, byte [r12 + AstNode.left]  
+    cmp dl, 8
+    jb .ebr_emit_rex
+    or al, 0x01          
+.ebr_emit_rex:
+    mov byte [r13], al
+    inc r13
+
+    mov edx, dword [r12 + AstNode.len]
     cmp edx, OP_ADD
     je .emit_add_r
     cmp edx, OP_SUB
     je .emit_sub_r
-    cmp edx, OP_MUL
-    je .emit_mul_r
     cmp edx, OP_XOR
     je .emit_xor_r
     cmp edx, OP_AND
     je .emit_and_r
     jmp .cg_next
+
 .emit_add_r:
-    mov byte [r13], 0x48
-    inc r13
     mov byte [r13], 0x01
     jmp .emit_modrm_r
 .emit_sub_r:
-    mov byte [r13], 0x48
-    inc r13
     mov byte [r13], 0x29
     jmp .emit_modrm_r
 .emit_xor_r:
-    mov byte [r13], 0x48
-    inc r13
     mov byte [r13], 0x31
     jmp .emit_modrm_r
 .emit_and_r:
-    mov byte [r13], 0x48
-    inc r13
     mov byte [r13], 0x21
     jmp .emit_modrm_r
 
 .emit_mul_r:
-    mov byte [r13], 0x48
+    mov al, 0x48
+    mov dl, byte [r12 + AstNode.left] 
+    cmp dl, 8
+    jb .emr_chk_src
+    or al, 0x04
+.emr_chk_src:
+    mov dl, byte [r12 + AstNode.right] 
+    cmp dl, 8
+    jb .emr_emit_rex
+    or al, 0x01
+.emr_emit_rex:
+    mov byte [r13], al
     inc r13
     mov word [r13], 0xAF0F
     add r13, 2
     mov al, 0xC0
     mov dl, byte [r12 + AstNode.left]
+    and dl, 0x07
     shl dl, 3
     or al, dl
-    or al, byte [r12 + AstNode.right]
+    mov dl, byte [r12 + AstNode.right]
+    and dl, 0x07
+    or al, dl
     mov byte [r13], al
     inc r13
     jmp .cg_next
@@ -881,9 +1672,12 @@ generate_code:
     inc r13
     mov al, 0xC0
     mov dl, byte [r12 + AstNode.right]
+    and dl, 0x07
     shl dl, 3
     or al, dl
-    or al, byte [r12 + AstNode.left]
+    mov dl, byte [r12 + AstNode.left]
+    and dl, 0x07
+    or al, dl
     mov byte [r13], al
     inc r13
     jmp .cg_next
@@ -1362,6 +2156,29 @@ generate_code:
     add r13, 4
     jmp .cg_next
 
+.emit_lea_var:
+    mov al, 0x48
+    mov dl, byte [r12 + AstNode.left]
+    cmp dl, 8
+    jb .el_no_rex_r
+    or al, 0x04
+.el_no_rex_r:
+    mov byte [r13], al
+    inc r13
+    mov byte [r13], 0x8D
+    inc r13
+    mov dl, byte [r12 + AstNode.left]
+    and dl, 0x07
+    shl dl, 3
+    or dl, 0x85
+    mov byte [r13], dl
+    inc r13
+    mov rax, qword [r12 + AstNode.value]
+    neg rax
+    mov dword [r13], eax
+    add r13, 4
+    jmp .cg_next
+
 .emit_print_str:
     mov byte [r13], 0xEB
     inc r13
@@ -1429,32 +2246,84 @@ generate_code:
     jmp .cg_next
 
 .emit_outb:
+    mov edx, dword [r12 + AstNode.len]
+    test edx, edx
+    jnz .e_outb_reg
+    ; outb imm_port, imm_val
     mov word [r13], 0xBA66
     add r13, 2
     mov rax, qword [r12 + AstNode.left]
     mov word [r13], ax
     add r13, 2
-
     mov byte [r13], 0xB0
     inc r13
     mov rax, qword [r12 + AstNode.right]
     mov byte [r13], al
     inc r13
-
     mov byte [r13], 0xEE
+    inc r13
+    jmp .cg_next
+.e_outb_reg:
+    mov byte [r13], 0xEE       ; out dx, al
+    inc r13
+    jmp .cg_next
+
+.emit_outw:
+    mov edx, dword [r12 + AstNode.len]
+    test edx, edx
+    jnz .e_outw_reg
+    mov word [r13], 0xBA66
+    add r13, 2
+    mov rax, qword [r12 + AstNode.left]
+    mov word [r13], ax
+    add r13, 2
+    mov word [r13], 0xB866
+    add r13, 2
+    mov rax, qword [r12 + AstNode.right]
+    mov word [r13], ax
+    add r13, 2
+    mov word [r13], 0xEF66
+    add r13, 2
+    jmp .cg_next
+.e_outw_reg:
+    mov word [r13], 0xEF66     ; out dx, ax
+    add r13, 2
+    jmp .cg_next
+
+.emit_outd:
+    mov edx, dword [r12 + AstNode.len]
+    test edx, edx
+    jnz .e_outd_reg
+    mov word [r13], 0xBA66
+    add r13, 2
+    mov rax, qword [r12 + AstNode.left]
+    mov word [r13], ax
+    add r13, 2
+    mov byte [r13], 0xB8
+    inc r13
+    mov rax, qword [r12 + AstNode.right]
+    mov dword [r13], eax
+    add r13, 4
+    mov byte [r13], 0xEF
+    inc r13
+    jmp .cg_next
+.e_outd_reg:
+    mov byte [r13], 0xEF       ; out dx, eax
     inc r13
     jmp .cg_next
 
 .emit_inb:
+    mov edx, dword [r12 + AstNode.len]
+    test edx, edx
+    jnz .e_inb_reg
     mov word [r13], 0xBA66
     add r13, 2
     mov rax, qword [r12 + AstNode.value]
     mov word [r13], ax
     add r13, 2
-
-    mov byte [r13], 0xEC
+.e_inb_reg:
+    mov byte [r13], 0xEC       ; in al, dx
     inc r13
-
     mov byte [r13], 0x48
     inc r13
     mov word [r13], 0xB60F
@@ -1468,15 +2337,17 @@ generate_code:
     jmp .cg_next
 
 .emit_inw:
+    mov edx, dword [r12 + AstNode.len]
+    test edx, edx
+    jnz .e_inw_reg
     mov word [r13], 0xBA66
     add r13, 2
     mov rax, qword [r12 + AstNode.value]
     mov word [r13], ax
     add r13, 2
-
-    mov word [r13], 0xED66
+.e_inw_reg:
+    mov word [r13], 0xED66     ; in ax, dx
     add r13, 2
-
     mov byte [r13], 0x48
     inc r13
     mov word [r13], 0xB70F
@@ -1487,6 +2358,84 @@ generate_code:
     or al, dl
     mov byte [r13], al
     inc r13
+    jmp .cg_next
+
+.emit_ind:
+    mov edx, dword [r12 + AstNode.len]
+    test edx, edx
+    jnz .e_ind_reg
+    mov word [r13], 0xBA66
+    add r13, 2
+    mov rax, qword [r12 + AstNode.value]
+    mov word [r13], ax
+    add r13, 2
+.e_ind_reg:
+    mov byte [r13], 0xED       ; in eax, dx
+    inc r13
+    mov byte [r13], 0x48
+    inc r13
+    mov byte [r13], 0x89
+    inc r13
+    mov al, 0xC0
+    mov dl, byte [r12 + AstNode.left]
+    and dl, 0x07
+    or al, dl
+    mov byte [r13], al
+    inc r13
+    jmp .cg_next
+
+.emit_mov_to_cr:
+    mov byte [r13], 0x0F
+    inc r13
+    mov byte [r13], 0x22       ; mov crX, reg
+    inc r13
+    mov al, 0xC0
+    mov dl, byte [r12 + AstNode.left]
+    shl dl, 3
+    or al, dl
+    mov dl, byte [r12 + AstNode.right]
+    and dl, 0x07
+    or al, dl
+    mov byte [r13], al
+    inc r13
+    jmp .cg_next
+
+.emit_mov_from_cr:
+    mov byte [r13], 0x0F
+    inc r13
+    mov byte [r13], 0x20       ; mov reg, crX
+    inc r13
+    mov al, 0xC0
+    mov dl, byte [r12 + AstNode.right]
+    shl dl, 3
+    or al, dl
+    mov dl, byte [r12 + AstNode.left]
+    and dl, 0x07
+    or al, dl
+    mov byte [r13], al
+    inc r13
+    jmp .cg_next
+
+.emit_lidt:
+    mov word [r13], 0x010F     ; lidt [rbp - disp32]
+    add r13, 2
+    mov byte [r13], 0x9D
+    inc r13
+    mov rax, qword [r12 + AstNode.value]
+    neg rax
+    mov dword [r13], eax
+    add r13, 4
+    jmp .cg_next
+
+.emit_lgdt:
+    mov word [r13], 0x010F     ; lgdt [rbp - disp32]
+    add r13, 2
+    mov byte [r13], 0x95
+    inc r13
+    mov rax, qword [r12 + AstNode.value]
+    neg rax
+    mov dword [r13], eax
+    add r13, 4
     jmp .cg_next
 
 .emit_logic_not:
@@ -2001,48 +2950,154 @@ generate_code:
     add r13, 2
     jmp .cg_next
 
-.emit_sys_write:
+; --- СИСТЕМНЫЕ ВЫЗОВЫ ---
+.emit_net_listen:
+    mov al, byte [r12 + AstNode.len]
+    mov rdx, qword [r12 + AstNode.left]
+    mov r8b, 0
+    call emit_load_syscall_arg
+
+    push rdi
+    mov rdi, r13
+    push rsi
+    push rcx
+    mov rsi, net_listen_template
+    mov ecx, NET_LISTEN_SIZE
+    rep movsb
+    pop rcx
+    pop rsi
+    mov r13, rdi
+    pop rdi
+    jmp .cg_next
+
+.emit_net_accept:
+    mov al, byte [r12 + AstNode.len]
+    mov rdx, qword [r12 + AstNode.left]
+    mov r8b, 7
+    call emit_load_syscall_arg
+
+    mov word [r13], 0xF631
+    add r13, 2
+    mov word [r13], 0xD231
+    add r13, 2
     mov byte [r13], 0xB8
     inc r13
-    mov dword [r13], 1
+    mov dword [r13], 43
     add r13, 4
-    jmp .emit_sys_3args_body
+    mov word [r13], 0x050F
+    add r13, 2
+    jmp .cg_next
+
+.emit_sys_write:
+    mov eax, 1
+    jmp .emit_sys_3args_dispatch
 
 .emit_sys_read:
+    mov eax, 0
+    jmp .emit_sys_3args_dispatch
+
+.emit_sys_socket:
+    mov eax, 41
+    jmp .emit_sys_3args_dispatch
+
+.emit_sys_bind:
+    mov eax, 49
+    jmp .emit_sys_3args_dispatch
+
+.emit_sys_accept:
+    mov eax, 43
+    jmp .emit_sys_3args_dispatch
+
+.emit_sys_open:
+    mov eax, 2
+    jmp .emit_sys_3args_dispatch
+
+.emit_sys_sendfile:
+    mov al, byte [r12 + AstNode.len]
+    mov rdx, qword [r12 + AstNode.left]
+    mov r8b, 7
+    call emit_load_syscall_arg
+
+    mov al, byte [r12 + AstNode.len + 1]
+    mov rdx, qword [r12 + AstNode.right]
+    mov r8b, 6
+    call emit_load_syscall_arg
+
+    mov byte [r13], 0x31
+    inc r13
+    mov byte [r13], 0xD2
+    inc r13
+
+    mov al, byte [r12 + AstNode.len + 2]
+    mov rdx, qword [r12 + AstNode.value]
+    mov r8b, 10
+    call emit_load_syscall_arg
+
     mov byte [r13], 0xB8
     inc r13
-    mov dword [r13], 0
+    mov dword [r13], 40
     add r13, 4
 
-.emit_sys_3args_body:
-    mov byte [r13], 0x48
-    inc r13
-    mov byte [r13], 0x89
-    inc r13
-    mov al, 0xC0
-    mov dl, byte [r12 + AstNode.left]
-    shl dl, 3
-    or al, dl
-    or al, 7
-    mov byte [r13], al
-    inc r13
+    mov word [r13], 0x050F
+    add r13, 2
+    jmp .cg_next
 
-    mov byte [r13], 0x48
-    inc r13
-    mov byte [r13], 0x89
-    inc r13
-    mov al, 0xC0
-    mov dl, byte [r12 + AstNode.right]
-    shl dl, 3
-    or al, dl
-    or al, 6
-    mov byte [r13], al
-    inc r13
+.emit_sys_3args_dispatch:
+    push rax
+    mov al, byte [r12 + AstNode.len]
+    mov rdx, qword [r12 + AstNode.left]
+    mov r8b, 7
+    call emit_load_syscall_arg
 
-    mov byte [r13], 0xBA
+    mov al, byte [r12 + AstNode.len + 1]
+    mov rdx, qword [r12 + AstNode.right]
+    mov r8b, 6
+    call emit_load_syscall_arg
+
+    mov al, byte [r12 + AstNode.len + 2]
+    mov rdx, qword [r12 + AstNode.value]
+    mov r8b, 2
+    call emit_load_syscall_arg
+
+    pop rax
+    mov byte [r13], 0xB8
     inc r13
-    mov rax, qword [r12 + AstNode.value]
     mov dword [r13], eax
+    add r13, 4
+
+    mov word [r13], 0x050F
+    add r13, 2
+    jmp .cg_next
+
+.emit_sys_listen:
+    mov al, byte [r12 + AstNode.len]
+    mov rdx, qword [r12 + AstNode.left]
+    mov r8b, 7
+    call emit_load_syscall_arg
+
+    mov al, byte [r12 + AstNode.len + 1]
+    mov rdx, qword [r12 + AstNode.right]
+    mov r8b, 6
+    call emit_load_syscall_arg
+
+    mov byte [r13], 0xB8
+    inc r13
+    mov dword [r13], 50
+    add r13, 4
+
+    mov word [r13], 0x050F
+    add r13, 2
+    jmp .cg_next
+
+.emit_sys_close:
+    mov al, byte [r12 + AstNode.len]
+    mov rdx, qword [r12 + AstNode.left]
+    mov r8b, 7
+    call emit_load_syscall_arg
+
+    mov byte [r13], 0xB8
+    inc r13
+    mov dword [r13], 3
     add r13, 4
 
     mov word [r13], 0x050F
@@ -2062,15 +3117,22 @@ generate_code:
     jmp .ese_syscall
 
 .ese_from_reg:
-    mov byte [r13], 0x48
+    mov al, 0x48
+    mov dl, byte [r12 + AstNode.right]
+    cmp dl, 8
+    jb .ese_no_rex_r
+    or al, 0x04
+.ese_no_rex_r:
+    mov byte [r13], al
     inc r13
     mov byte [r13], 0x89
     inc r13
     mov al, 0xC0
     mov dl, byte [r12 + AstNode.right]
+    and dl, 0x07
     shl dl, 3
     or al, dl
-    or al, 7
+    or al, 7  
     mov byte [r13], al
     inc r13
 
@@ -2174,14 +3236,16 @@ generate_code:
     jmp .cg_next
 
 .emit_epilogue:
-    mov word [r13], 0x8948
+    mov word [r13], 0xFF31
     add r13, 2
-    mov byte [r13], 0xEC
+
+    mov byte [r13], 0xB8
     inc r13
-    mov byte [r13], 0x5D
-    inc r13
-    mov byte [r13], 0xC3
-    inc r13
+    mov dword [r13], 60
+    add r13, 4
+
+    mov word [r13], 0x050F
+    add r13, 2
     jmp .cg_next
 
 .cg_next:
@@ -2191,7 +3255,7 @@ generate_code:
 
 .cg_done:
     mov rax, r13
-    sub rax, rdi
+    sub rax, [code_start_ptr]
     pop rbp
     ret
 

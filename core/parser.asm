@@ -50,6 +50,95 @@ find_var:
     pop rbx
     ret
 
+find_struct:
+    push rbx
+    push rsi
+    push rdi
+    push rcx
+    mov rsi, r8
+    mov ecx, edx
+    mov rbx, [structs_count]
+    test rbx, rbx
+    jz .s_not_found
+    xor r10, r10
+.s_search_loop:
+    mov rdi, [structs_table + r10]
+    mov eax, dword [structs_table + r10 + 8]
+    cmp eax, ecx
+    jne .s_next_var
+    push rcx
+    push rsi
+    push rdi
+    repe cmpsb
+    pop rdi
+    pop rsi
+    pop rcx
+    je .s_found
+.s_next_var:
+    add r10, 32
+    dec rbx
+    jnz .s_search_loop
+.s_not_found:
+    xor rax, rax
+    pop rcx
+    pop rdi
+    pop rsi
+    pop rbx
+    ret
+.s_found:
+    mov rax, r10
+    add rax, structs_table
+    pop rcx
+    pop rdi
+    pop rsi
+    pop rbx
+    ret
+
+find_struct_field:
+    push rbx
+    push rsi
+    push rdi
+    push rcx
+    mov rsi, r8
+    mov ecx, edx
+    mov ebx, dword [r15 + 16] 
+    mov r10, qword [r15 + 24] 
+    shl r10, 5
+    test ebx, ebx
+    jz .sf_not_found
+.sf_search_loop:
+    mov rdi, [struct_fields_pool + r10]
+    mov eax, dword [struct_fields_pool + r10 + 8]
+    cmp eax, ecx
+    jne .sf_next_var
+    push rcx
+    push rsi
+    push rdi
+    repe cmpsb
+    pop rdi
+    pop rsi
+    pop rcx
+    je .sf_found
+.sf_next_var:
+    add r10, 32
+    dec ebx
+    jnz .sf_search_loop
+.sf_not_found:
+    xor rax, rax
+    pop rcx
+    pop rdi
+    pop rsi
+    pop rbx
+    ret
+.sf_found:
+    mov rax, r10
+    add rax, struct_fields_pool
+    pop rcx
+    pop rdi
+    pop rsi
+    pop rbx
+    ret
+
 parse_number_val:
     push rbx
     push rsi
@@ -121,6 +210,75 @@ parse_number_val:
     pop rbx
     ret
 
+parse_syscall_arg:
+    mov eax, dword [r12 + Token.type]
+    cmp eax, TOKEN_REGISTER
+    je .psa_reg
+    cmp eax, TOKEN_NUMBER
+    je .psa_num
+    cmp eax, TOKEN_IDENTIFIER
+    je .psa_var
+    cmp eax, TOKEN_STRING
+    je .psa_str
+    cmp eax, TOKEN_OPERATOR
+    je .psa_lea
+    xor al, al
+    xor rdx, rdx
+    ret
+.psa_reg:
+    mov al, 1
+    movzx rdx, byte [r12 + Token.len]
+    add r12, 16
+    ret
+.psa_num:
+    mov r8, qword [r12 + Token.ptr]
+    mov edx, dword [r12 + Token.len]
+    call parse_number_val
+    mov rdx, rax
+    mov al, 0
+    add r12, 16
+    ret
+.psa_str:
+    mov rdx, qword [r12 + Token.ptr]
+    mov al, 0
+    add r12, 16
+    ret
+.psa_var:
+    mov r8, qword [r12 + Token.ptr]
+    mov edx, dword [r12 + Token.len]
+    call find_var
+    test rax, rax
+    jz .psa_err
+    mov rdx, qword [rax + 16]
+    mov al, 2
+    add r12, 16
+    ret
+.psa_lea:
+    mov r8, qword [r12 + Token.ptr]
+    cmp byte [r8], '&'
+    jne .psa_err
+    mov eax, dword [r12 + 16 + Token.type]
+    cmp eax, TOKEN_STRING
+    je .psa_lea_str
+    mov r8, qword [r12 + 16 + Token.ptr]
+    mov edx, dword [r12 + 16 + Token.len]
+    call find_var
+    test rax, rax
+    jz .psa_err
+    mov rdx, qword [rax + 16]
+    mov al, 3
+    add r12, 32
+    ret
+.psa_lea_str:
+    mov rdx, qword [r12 + 16 + Token.ptr]
+    mov al, 0
+    add r12, 32
+    ret
+.psa_err:
+    xor al, al
+    xor rdx, rdx
+    ret
+
 parse_program:
     push rbp
     mov rbp, rsp
@@ -132,6 +290,7 @@ parse_program:
     mov byte [is_vars_mode], 0
     mov byte [is_logic_mode], 0
     mov byte [is_kids_mode], 0
+    mov byte [is_net_mode], 0
     mov byte [is_gc_enabled], 0
     mov byte [is_blocks_enabled], 0
     mov qword [vars_count], 0
@@ -168,14 +327,63 @@ parse_program:
     je .parse_label_decl
 
     mov eax, dword [r12 + 16 + Token.type]
+    cmp eax, TOKEN_DELIMITER
+    jne .check_double_colon
+    mov r9, qword [r12 + 16 + Token.ptr]
+    cmp byte [r9], '.'
+    je .parse_var_reassign
+
+.check_double_colon:
     cmp eax, TOKEN_OPERATOR
-    jne .err_syntax
+    jne .check_struct_inst
     mov r9, qword [r12 + 16 + Token.ptr]
     cmp word [r9], 0x3A3A
     je .parse_decl_header
 
     cmp byte [r9], '='
     je .parse_var_reassign
+    jmp .err_syntax
+
+.check_struct_inst:
+    cmp eax, TOKEN_IDENTIFIER
+    jne .err_syntax
+    mov r8, qword [r12 + Token.ptr]
+    mov edx, dword [r12 + Token.len]
+
+.parse_struct_inst:
+    push rdx
+    push r8
+    call find_struct
+    test rax, rax
+    jz .struct_inst_err
+
+    mov r14, rax
+    mov r15d, dword [r14 + 12] 
+    add qword [curr_var_offset], r15
+
+    mov rbx, [vars_count]
+    shl rbx, 5
+    mov r8, qword [r12 + 16 + Token.ptr]
+    mov [vars_table + rbx], r8
+    mov r8d, dword [r12 + 16 + Token.len]
+    mov dword [vars_table + rbx + 8], r8d
+    mov r8, [curr_var_offset]
+    mov qword [vars_table + rbx + 16], r8
+
+    mov r11, rax
+    sub r11, structs_table
+    shr r11, 5
+    mov dword [vars_table + rbx + 24], r11d 
+    inc qword [vars_count]
+
+    pop r8
+    pop rdx
+    add r12, 32
+    jmp .loop
+
+.struct_inst_err:
+    pop r8
+    pop rdx
     jmp .err_syntax
 
 .skip_indent_tok:
@@ -201,6 +409,82 @@ parse_program:
     jz .err_syntax
 
     mov r14, rax
+    mov r11, qword [r14 + 16]   
+    mov r15d, dword [r14 + 24]  
+
+    mov eax, dword [r12 + 16 + Token.type]
+    cmp eax, TOKEN_DELIMITER
+    jne .pvr_no_dot
+
+    mov r8, qword [r12 + 16 + Token.ptr]
+    cmp byte [r8], '.'
+    jne .pvr_no_dot
+
+    push r11
+    mov r10d, r15d
+    mov r15, structs_table
+    shl r10, 5
+    add r15, r10  
+
+    mov eax, dword [r12 + 32 + Token.type]
+    cmp eax, TOKEN_IDENTIFIER
+    jne .pvr_dot_err
+
+    mov r8, qword [r12 + 32 + Token.ptr]
+    mov edx, dword [r12 + 32 + Token.len]
+    call find_struct_field
+    test rax, rax
+    jz .pvr_dot_err
+
+    pop r11
+    mov r10d, dword [rax + 16] 
+    sub r11, r10              
+    mov r15d, dword [rax + 12] 
+    
+    mov eax, dword [r12 + 48 + Token.type]
+    cmp eax, TOKEN_OPERATOR
+    jne .err_syntax
+    mov r8, qword [r12 + 48 + Token.ptr]
+    cmp byte [r8], '='
+    jne .err_syntax
+
+    add r12, 64
+
+    mov eax, dword [r12 + Token.type]
+    cmp eax, TOKEN_NUMBER
+    je .pvr_dot_num
+    cmp eax, TOKEN_REGISTER
+    je .pvr_dot_reg
+    jmp .err_syntax
+
+.pvr_dot_err:
+    pop r11
+    jmp .err_syntax
+
+.pvr_dot_num:
+    mov r8, qword [r12 + Token.ptr]
+    mov edx, dword [r12 + Token.len]
+    call parse_number_val
+
+    mov dword [r13 + AstNode.type], AST_NODE_VAR_ASSIGN_IMM
+    mov dword [r13 + AstNode.len], r15d
+    mov qword [r13 + AstNode.left], r11
+    mov qword [r13 + AstNode.value], rax
+    add r13, 32
+    add r12, 16
+    jmp .loop
+
+.pvr_dot_reg:
+    mov dword [r13 + AstNode.type], AST_NODE_VAR_ASSIGN_REG
+    mov dword [r13 + AstNode.len], r15d
+    mov qword [r13 + AstNode.left], r11
+    movzx rdx, byte [r12 + Token.len]
+    mov qword [r13 + AstNode.right], rdx
+    add r13, 32
+    add r12, 16
+    jmp .loop
+
+.pvr_no_dot:
     mov eax, dword [r12 + 32 + Token.type]
     cmp eax, TOKEN_NUMBER
     je .var_reassign_num
@@ -379,10 +663,8 @@ parse_program:
 
     cmp byte [r8], '{'
     je .handle_block_open
-
     cmp byte [r8], '}'
     je .handle_block_close
-
     cmp byte [r8], '['
     jne .err_syntax
 
@@ -513,6 +795,7 @@ parse_program:
     jmp .loop
 
 .hds_store_num_disp:
+    push rdx
     push r9
     push r10
     mov r8, qword [r12 + 96 + Token.ptr]
@@ -539,19 +822,14 @@ parse_program:
     mov eax, dword [r12 + 32 + Token.type]
     cmp eax, TOKEN_NUMBER
     je .reg_assign_num
-
     cmp eax, TOKEN_OPERATOR
     je .reg_assign_op
-
     cmp eax, TOKEN_DELIMITER
     je .reg_assign_delim
-
     cmp eax, TOKEN_REGISTER
     je .reg_assign_reg
-
     cmp eax, TOKEN_KEYWORD
     je .reg_assign_kw
-
     cmp eax, TOKEN_IDENTIFIER
     je .reg_assign_ident_or_inb
     jmp .err_syntax
@@ -559,6 +837,28 @@ parse_program:
 .reg_assign_kw:
     mov r8, qword [r12 + 32 + Token.ptr]
     mov ecx, dword [r12 + 32 + Token.len]
+
+    cmp ecx, 3
+    jne .chk_kw_new
+    cmp byte [r8], 'c'
+    jne .chk_kw_new
+    cmp byte [r8 + 1], 'r'
+    jne .chk_kw_new
+
+    cmp byte [is_osdev_mode], 1
+    jne .err_osdev_needed
+
+    movzx rax, byte [r8 + 2]
+    sub rax, '0'
+    mov dword [r13 + AstNode.type], AST_NODE_MOV_FROM_CR
+    movzx rdx, byte [r12 + Token.len]
+    mov qword [r13 + AstNode.left], rdx
+    mov qword [r13 + AstNode.right], rax
+    add r13, 32
+    add r12, 48
+    jmp .loop
+
+.chk_kw_new:
     cmp ecx, 3
     jne .reg_assign_mem
     cmp byte [r8], 'n'
@@ -574,7 +874,6 @@ parse_program:
     mov eax, dword [r12 + 48 + Token.type]
     cmp eax, TOKEN_DELIMITER
     jne .err_syntax
-
     mov eax, dword [r12 + 64 + Token.type]
     cmp eax, TOKEN_NUMBER
     jne .err_syntax
@@ -692,7 +991,26 @@ parse_program:
     mov r8, qword [r12 + 32 + Token.ptr]
     cmp byte [r8], '!'
     je .parse_logic_not
+    cmp byte [r8], '&'
+    je .parse_lea_var
     jmp .err_syntax
+
+.parse_lea_var:
+    mov r8, qword [r12 + 48 + Token.ptr]
+    mov edx, dword [r12 + 48 + Token.len]
+    call find_var
+    test rax, rax
+    jz .err_syntax
+
+    mov dword [r13 + AstNode.type], AST_NODE_LEA_VAR
+    mov rdx, qword [rax + 16]
+    mov qword [r13 + AstNode.value], rdx
+    movzx rdx, byte [r12 + Token.len]
+    mov qword [r13 + AstNode.left], rdx
+    
+    add r13, 32
+    add r12, 64
+    jmp .loop
 
 .parse_logic_not:
     cmp byte [is_logic_mode], 1
@@ -777,6 +1095,15 @@ parse_program:
 .reg_assign_ident_or_inb:
     mov r8, qword [r12 + 32 + Token.ptr]
     mov ecx, dword [r12 + 32 + Token.len]
+    
+    mov eax, dword [r12 + 48 + Token.type]
+    cmp eax, TOKEN_DELIMITER
+    jne .rai_not_dot
+    mov r9, qword [r12 + 48 + Token.ptr]
+    cmp byte [r9], '.'
+    je .reg_assign_struct_field
+    
+.rai_not_dot:
     cmp ecx, 3
     jne .reg_assign_var
 
@@ -789,40 +1116,93 @@ parse_program:
     je .is_inb
     cmp byte [r8 + 2], 'w'
     je .is_inw
+    cmp byte [r8 + 2], 'd'
+    je .is_ind
     jmp .reg_assign_var
+
+.reg_assign_struct_field:
+    mov r8, qword [r12 + 32 + Token.ptr]
+    mov edx, dword [r12 + 32 + Token.len]
+    call find_var
+    test rax, rax
+    jz .err_syntax
+    
+    mov r14, rax
+    mov r11, qword [r14 + 16]   
+    mov r15d, dword [r14 + 24]  
+    
+    push r11
+    mov r10d, r15d
+    mov r15, structs_table
+    shl r10, 5
+    add r15, r10  
+    
+    mov eax, dword [r12 + 64 + Token.type]
+    cmp eax, TOKEN_IDENTIFIER
+    jne .pvr_struct_err
+    
+    mov r8, qword [r12 + 64 + Token.ptr]
+    mov edx, dword [r12 + 64 + Token.len]
+    call find_struct_field
+    test rax, rax
+    jz .pvr_struct_err
+    
+    pop r11
+    mov r10d, dword [rax + 16] 
+    sub r11, r10              
+    mov r15d, dword [rax + 12] 
+    
+    mov dword [r13 + AstNode.type], AST_NODE_REG_ASSIGN_VAR
+    mov dword [r13 + AstNode.len], r15d
+    movzx rdx, byte [r12 + Token.len]
+    mov qword [r13 + AstNode.left], rdx
+    mov qword [r13 + AstNode.right], r11
+    add r13, 32
+    add r12, 80
+    jmp .loop
+
+.pvr_struct_err:
+    pop r11
+    jmp .err_syntax
 
 .is_inb:
     mov edx, AST_NODE_INB
     jmp .parse_port_call
 .is_inw:
     mov edx, AST_NODE_INW
+    jmp .parse_port_call
+.is_ind:
+    mov edx, AST_NODE_IND
 
 .parse_port_call:
-    mov eax, dword [r12 + 48 + Token.type]
-    cmp eax, TOKEN_DELIMITER
-    jne .err_syntax
-
-    mov eax, dword [r12 + 64 + Token.type]
-    cmp eax, TOKEN_NUMBER
-    jne .err_syntax
+    cmp byte [is_osdev_mode], 1
+    jne .err_osdev_needed
 
     push rdx
-    mov r8, qword [r12 + 64 + Token.ptr]
-    mov edx, dword [r12 + 64 + Token.len]
-    call parse_number_val
-    mov r9, rax
-    pop rdx
+    movzx r14, byte [r12 + Token.len]
+    add r12, 48
 
-    mov eax, dword [r12 + 80 + Token.type]
+    mov eax, dword [r12 + Token.type]
     cmp eax, TOKEN_DELIMITER
-    jne .err_syntax
+    jne .ppc_no_paren
+    add r12, 16
 
-    mov dword [r13 + AstNode.type], edx
-    movzx rax, byte [r12 + Token.len]
-    mov qword [r13 + AstNode.left], rax
-    mov qword [r13 + AstNode.value], r9
+.ppc_no_paren:
+    call parse_syscall_arg
+    pop rbx
+    mov dword [r13 + AstNode.type], ebx
+    mov qword [r13 + AstNode.left], r14
+    mov qword [r13 + AstNode.value], rdx
+    movzx eax, al
+    mov dword [r13 + AstNode.len], eax
+
+    mov eax, dword [r12 + Token.type]
+    cmp eax, TOKEN_DELIMITER
+    jne .ppc_done
+    add r12, 16
+
+.ppc_done:
     add r13, 32
-    add r12, 96
     jmp .loop
 
 .reg_assign_direct_mem:
@@ -1062,18 +1442,26 @@ parse_program:
     mov r8, qword [r12 + Token.ptr]
     mov ecx, dword [r12 + Token.len]
 
+    cmp ecx, 6
+    jne .chk_pop
+    cmp dword [r8], "stru"
+    jne .chk_pop
+    cmp word [r8 + 4], "ct"
+    je .parse_struct_decl
+
+.chk_pop:
     cmp ecx, 4
-    jne .chk_pop
+    jne .chk_pop_act
     cmp byte [r8], 'p'
-    jne .chk_pop
+    jne .chk_pop_act
     cmp byte [r8 + 1], 'u'
-    jne .chk_pop
+    jne .chk_pop_act
     cmp byte [r8 + 2], 's'
-    jne .chk_pop
+    jne .chk_pop_act
     cmp byte [r8 + 3], 'h'
     je .is_push
 
-.chk_pop:
+.chk_pop_act:
     cmp ecx, 3
     jne .check_enable
     cmp byte [r8], 'p'
@@ -1110,6 +1498,118 @@ parse_program:
     cmp ecx, 6
     je .check_is_blocks
     jmp .err_syntax
+
+.parse_struct_decl:
+    add r12, 16
+    mov eax, dword [r12 + Token.type]
+    cmp eax, TOKEN_IDENTIFIER
+    jne .err_syntax
+
+    mov r8, qword [r12 + Token.ptr]
+    mov r9d, dword [r12 + Token.len]
+
+    mov rbx, [structs_count]
+    mov r10, rbx
+    shl r10, 5
+    lea r14, [structs_table + r10]
+    mov [r14], r8
+    mov [r14 + 8], r9d
+    mov dword [r14 + 12], 0
+    mov dword [r14 + 16], 0
+    mov r11, [struct_fields_ptr]
+    mov [r14 + 24], r11
+    inc qword [structs_count]
+
+    add r12, 16
+    mov eax, dword [r12 + Token.type]
+    cmp eax, TOKEN_DELIMITER
+    jne .err_syntax
+
+    add r12, 16
+.parse_struct_fields:
+    mov eax, dword [r12 + Token.type]
+
+    cmp eax, TOKEN_INDENT
+    je .skip_sf_indent
+    cmp eax, TOKEN_DEDENT
+    je .skip_sf_indent
+
+    cmp eax, TOKEN_DELIMITER
+    je .struct_end_bracket
+
+    cmp eax, TOKEN_IDENTIFIER
+    jne .err_syntax
+
+    mov r8, qword [r12 + Token.ptr]
+    mov r9d, dword [r12 + Token.len]
+
+    add r12, 16
+    mov eax, dword [r12 + Token.type]
+    cmp eax, TOKEN_DELIMITER
+    jne .err_syntax
+
+    add r12, 16
+    mov eax, dword [r12 + Token.type]
+    cmp eax, TOKEN_KEYWORD
+    jne .err_syntax
+
+    mov r10, qword [r12 + Token.ptr]
+    mov ecx, dword [r12 + Token.len]
+    mov edx, 8
+    cmp ecx, 4
+    jne .ps_type_dw
+    cmp byte [r10], 'b'
+    je .ps_type_b
+    cmp byte [r10], 'w'
+    je .ps_type_w
+.ps_type_dw:
+    cmp ecx, 5
+    jne .ps_type_qw
+    cmp byte [r10], 'd'
+    je .ps_type_d
+.ps_type_qw:
+    cmp ecx, 5
+    jne .err_syntax
+    cmp byte [r10], 'q'
+    je .ps_type_q
+    jmp .err_syntax
+
+.ps_type_b:
+    mov edx, 1
+    jmp .ps_alloc_field
+.ps_type_w:
+    mov edx, 2
+    jmp .ps_alloc_field
+.ps_type_d:
+    mov edx, 4
+    jmp .ps_alloc_field
+.ps_type_q:
+    mov edx, 8
+
+.ps_alloc_field:
+    mov rbx, [struct_fields_ptr]
+    shl rbx, 5
+    lea r15, [struct_fields_pool + rbx]
+    mov [r15], r8
+    mov [r15 + 8], r9d
+    mov dword [r15 + 12], edx
+    mov r11d, dword [r14 + 12]
+    mov dword [r15 + 16], r11d
+
+    add dword [r14 + 12], edx
+    inc dword [r14 + 16]
+    inc qword [struct_fields_ptr]
+
+    add r12, 16
+    jmp .parse_struct_fields
+
+.skip_sf_indent:
+    add r12, 16
+    jmp .parse_struct_fields
+
+.struct_end_bracket:
+    add r12, 16
+    jmp .loop
 
 .is_push:
     mov eax, dword [r12 + 16 + Token.type]
@@ -1318,15 +1818,15 @@ parse_program:
 
 .check_mode_kw:
     cmp ecx, 4
-    jne .check_say
+    jne .check_kids
     cmp byte [r8], 'm'
-    jne .check_say
+    jne .check_kids
     cmp byte [r8 + 1], 'o'
-    jne .check_say
+    jne .check_kids
     cmp byte [r8 + 2], 'd'
-    jne .check_say
+    jne .check_kids
     cmp byte [r8 + 3], 'e'
-    jne .check_say
+    jne .check_kids
 
     mov eax, dword [r12 + 16 + Token.type]
     cmp eax, TOKEN_STRING
@@ -1397,6 +1897,17 @@ parse_program:
 .chk_m_sys:
     cmp edx, 3
     jne .set_m_loser
+    cmp byte [r9], 'n'
+    jne .chk_m_sys_real
+    cmp byte [r9 + 1], 'e'
+    jne .chk_m_sys_real
+    cmp byte [r9 + 2], 't'
+    jne .chk_m_sys_real
+    mov byte [is_net_mode], 1
+    add r12, 32
+    jmp .loop
+
+.chk_m_sys_real:
     cmp byte [r9], 's'
     jne .set_m_loser
     cmp byte [r9 + 1], 'y'
@@ -1410,6 +1921,281 @@ parse_program:
 .set_m_loser:
     mov byte [is_loser_mode], 1
     add r12, 32
+    jmp .loop
+
+.check_kids:
+.chk_cls:
+    cmp ecx, 3
+    jne .chk_beep
+    cmp byte [r8], 'c'
+    jne .chk_beep
+    cmp byte [r8 + 1], 'l'
+    jne .chk_beep
+    cmp byte [r8 + 2], 's'
+    jne .chk_beep
+
+    cmp byte [is_kids_mode], 1
+    jne .err_kids_needed
+
+    mov dword [r13 + AstNode.type], AST_NODE_KIDS_CLS
+    add r13, 32
+    add r12, 16
+    jmp .loop
+
+.chk_beep:
+    cmp ecx, 4
+    jne .chk_sleep
+    cmp byte [r8], 'b'
+    jne .chk_sleep
+    cmp byte [r8 + 1], 'e'
+    jne .chk_sleep
+    cmp byte [r8 + 2], 'e'
+    jne .chk_sleep
+    cmp byte [r8 + 3], 'p'
+    jne .chk_sleep
+
+    cmp byte [is_kids_mode], 1
+    jne .err_kids_needed
+
+    mov dword [r13 + AstNode.type], AST_NODE_KIDS_BEEP
+    add r13, 32
+    add r12, 16
+    jmp .loop
+
+.chk_sleep:
+    cmp ecx, 5
+    jne .chk_color
+    cmp dword [r8], "slee"
+    jne .chk_color
+    cmp byte [r8 + 4], 'p'
+    jne .chk_color
+
+    cmp byte [is_kids_mode], 1
+    jne .err_kids_needed
+
+    add r12, 16
+    mov eax, dword [r12 + Token.type]
+    cmp eax, TOKEN_DELIMITER
+    jne .sleep_no_paren
+    mov r9, qword [r12 + Token.ptr]
+    cmp byte [r9], '('
+    jne .sleep_no_paren
+    add r12, 16
+
+.sleep_no_paren:
+    call parse_syscall_arg
+    mov qword [r13 + AstNode.value], rdx
+    movzx eax, al
+    mov dword [r13 + AstNode.len], eax
+
+    mov eax, dword [r12 + Token.type]
+    cmp eax, TOKEN_DELIMITER
+    jne .emit_sleep_done
+    mov r9, qword [r12 + Token.ptr]
+    cmp byte [r9], ')'
+    jne .emit_sleep_done
+    add r12, 16
+
+.emit_sleep_done:
+    mov dword [r13 + AstNode.type], AST_NODE_KIDS_SLEEP
+    add r13, 32
+    jmp .loop
+
+.chk_color:
+    cmp ecx, 5
+    je .chk_color5
+    cmp ecx, 6
+    je .chk_colour6
+    jmp .chk_locate
+
+.chk_color5:
+    cmp dword [r8], "colo"
+    jne .chk_locate
+    cmp byte [r8 + 4], 'r'
+    jne .chk_locate
+    jmp .parse_color_body
+
+.chk_colour6:
+    cmp dword [r8], "colo"
+    jne .chk_locate
+    cmp byte [r8 + 4], 'u'
+    jne .chk_locate
+    cmp byte [r8 + 5], 'r'
+    jne .chk_locate
+
+.parse_color_body:
+    cmp byte [is_kids_mode], 1
+    jne .err_kids_needed
+
+    add r12, 16
+    mov eax, dword [r12 + Token.type]
+    cmp eax, TOKEN_DELIMITER
+    jne .col_no_paren
+    mov r9, qword [r12 + Token.ptr]
+    cmp byte [r9], '('
+    jne .col_no_paren
+    add r12, 16
+
+.col_no_paren:
+    mov eax, dword [r12 + Token.type]
+    cmp eax, TOKEN_STRING
+    jne .err_syntax
+
+    mov eax, dword [r12 + Token.len]
+    mov dword [r13 + AstNode.len], eax
+    mov r9, qword [r12 + Token.ptr]
+    mov qword [r13 + AstNode.value], r9
+    add r12, 16
+
+    mov eax, dword [r12 + Token.type]
+    cmp eax, TOKEN_DELIMITER
+    jne .emit_color_done
+    mov r9, qword [r12 + Token.ptr]
+    cmp byte [r9], ')'
+    jne .emit_color_done
+    add r12, 16
+
+.emit_color_done:
+    mov dword [r13 + AstNode.type], AST_NODE_KIDS_COLOR
+    add r13, 32
+    jmp .loop
+
+.chk_locate:
+    cmp ecx, 6
+    jne .chk_say_num
+    cmp dword [r8], "loca"
+    jne .chk_say_num
+    cmp word [r8 + 4], "te"
+    jne .chk_say_num
+
+    cmp byte [is_kids_mode], 1
+    jne .err_kids_needed
+
+    add r12, 16
+    mov eax, dword [r12 + Token.type]
+    cmp eax, TOKEN_DELIMITER
+    jne .loc_no_paren
+    mov r9, qword [r12 + Token.ptr]
+    cmp byte [r9], '('
+    jne .loc_no_paren
+    add r12, 16
+
+.loc_no_paren:
+    call parse_syscall_arg
+    mov qword [r13 + AstNode.left], rdx
+    movzx ebx, al
+
+    mov eax, dword [r12 + Token.type]
+    cmp eax, TOKEN_DELIMITER
+    jne .err_syntax
+    mov r9, qword [r12 + Token.ptr]
+    cmp byte [r9], ','
+    jne .err_syntax
+    add r12, 16
+
+    call parse_syscall_arg
+    mov qword [r13 + AstNode.right], rdx
+    movzx eax, al
+    shl eax, 8
+    or ebx, eax
+    mov dword [r13 + AstNode.len], ebx
+
+    mov eax, dword [r12 + Token.type]
+    cmp eax, TOKEN_DELIMITER
+    jne .emit_loc_done
+    mov r9, qword [r12 + Token.ptr]
+    cmp byte [r9], ')'
+    jne .emit_loc_done
+    add r12, 16
+
+.emit_loc_done:
+    mov dword [r13 + AstNode.type], AST_NODE_KIDS_LOCATE
+    add r13, 32
+    jmp .loop
+
+.chk_say_num:
+    cmp ecx, 7
+    jne .chk_cursors
+    cmp dword [r8], "say_"
+    jne .chk_cursors
+    cmp byte [r8 + 4], 'n'
+    jne .chk_cursors
+    cmp byte [r8 + 5], 'u'
+    jne .chk_cursors
+    cmp byte [r8 + 6], 'm'
+    jne .chk_cursors
+
+    cmp byte [is_kids_mode], 1
+    jne .err_kids_needed
+
+    add r12, 16
+    mov eax, dword [r12 + Token.type]
+    cmp eax, TOKEN_DELIMITER
+    jne .sn_no_paren
+    mov r9, qword [r12 + Token.ptr]
+    cmp byte [r9], '('
+    jne .sn_no_paren
+    add r12, 16
+
+.sn_no_paren:
+    call parse_syscall_arg
+    mov qword [r13 + AstNode.value], rdx
+    movzx eax, al
+    mov dword [r13 + AstNode.len], eax
+
+    mov eax, dword [r12 + Token.type]
+    cmp eax, TOKEN_DELIMITER
+    jne .emit_sn_done
+    mov r9, qword [r12 + Token.ptr]
+    cmp byte [r9], ')'
+    jne .emit_sn_done
+    add r12, 16
+
+.emit_sn_done:
+    mov dword [r13 + AstNode.type], AST_NODE_KIDS_SAY_NUM
+    add r13, 32
+    jmp .loop
+
+.chk_cursors:
+    cmp ecx, 11
+    jne .check_say
+    cmp dword [r8], "hide"
+    jne .chk_show_cur
+    cmp dword [r8 + 4], "_cur"
+    jne .chk_show_cur
+    cmp byte [r8 + 8], 's'
+    jne .chk_show_cur
+    cmp byte [r8 + 9], 'o'
+    jne .chk_show_cur
+    cmp byte [r8 + 10], 'r'
+    jne .chk_show_cur
+
+    cmp byte [is_kids_mode], 1
+    jne .err_kids_needed
+
+    mov dword [r13 + AstNode.type], AST_NODE_KIDS_HIDE_CURSOR
+    add r13, 32
+    add r12, 16
+    jmp .loop
+
+.chk_show_cur:
+    cmp dword [r8], "show"
+    jne .check_say
+    cmp dword [r8 + 4], "_cur"
+    jne .check_say
+    cmp byte [r8 + 8], 's'
+    jne .check_say
+    cmp byte [r8 + 9], 'o'
+    jne .check_say
+    cmp byte [r8 + 10], 'r'
+    jne .check_say
+
+    cmp byte [is_kids_mode], 1
+    jne .err_kids_needed
+
+    mov dword [r13 + AstNode.type], AST_NODE_KIDS_SHOW_CURSOR
+    add r13, 32
+    add r12, 16
     jmp .loop
 
 .check_say:
@@ -1427,8 +2213,16 @@ parse_program:
 
     mov eax, dword [r12 + 16 + Token.type]
     cmp eax, TOKEN_STRING
-    jne .err_syntax
+    je .emit_say_node
 
+    cmp eax, TOKEN_DELIMITER
+    jne .err_syntax
+    mov eax, dword [r12 + 32 + Token.type]
+    cmp eax, TOKEN_STRING
+    jne .err_syntax
+    add r12, 16
+
+.emit_say_node:
     mov dword [r13 + AstNode.type], AST_NODE_SAY
     mov eax, dword [r12 + 16 + Token.len]
     mov dword [r13 + AstNode.len], eax
@@ -1436,8 +2230,12 @@ parse_program:
     mov qword [r13 + AstNode.value], r9
     add r13, 32
     add r12, 32
+    mov eax, dword [r12 + Token.type]
+    cmp eax, TOKEN_DELIMITER
+    jne .loop
+    add r12, 16
     jmp .loop
-
+    
 .check_repeat:
     cmp ecx, 6
     jne .check_mut
@@ -1513,13 +2311,13 @@ parse_program:
 
 .check_mut:
     cmp ecx, 3
-    jne .check_print
+    jne .check_buf
     cmp byte [r8], 'm'
-    jne .check_print
+    jne .check_buf
     cmp byte [r8 + 1], 'u'
-    jne .check_print
+    jne .check_buf
     cmp byte [r8 + 2], 't'
-    jne .check_print
+    jne .check_buf
 
     cmp byte [is_vars_mode], 1
     jne .err_vars_needed
@@ -1612,6 +2410,59 @@ parse_program:
     add r12, 96
     jmp .loop
 
+.check_buf:
+    cmp ecx, 3
+    jne .check_print
+    cmp byte [r8], 'b'
+    jne .check_print
+    cmp byte [r8 + 1], 'u'
+    jne .check_print
+    cmp byte [r8 + 2], 'f'
+    jne .check_print
+
+    cmp byte [is_vars_mode], 1
+    jne .err_vars_needed
+
+    mov eax, dword [r12 + 16 + Token.type]
+    cmp eax, TOKEN_IDENTIFIER
+    jne .err_syntax
+
+    mov eax, dword [r12 + 32 + Token.type]
+    cmp eax, TOKEN_DELIMITER
+    jne .err_syntax
+
+    push r8
+    mov r8, qword [r12 + 48 + Token.ptr]
+    mov edx, dword [r12 + 48 + Token.len]
+    call parse_number_val
+    mov r9, rax 
+    pop r8
+
+    add qword [curr_var_offset], r9
+    mov rbx, [vars_count]
+    shl rbx, 5
+    mov r10, qword [r12 + 16 + Token.ptr]
+    mov [vars_table + rbx], r10
+    mov r10d, dword [r12 + 16 + Token.len]
+    mov dword [vars_table + rbx + 8], r10d
+    mov r10, [curr_var_offset]
+    mov qword [vars_table + rbx + 16], r10
+    mov dword [vars_table + rbx + 24], 1
+    inc qword [vars_count]
+
+    mov eax, dword [r12 + 64 + Token.type]
+    cmp eax, TOKEN_DELIMITER
+    jne .buf_no_bracket
+    mov r10, qword [r12 + 64 + Token.ptr]
+    cmp byte [r10], ']'
+    jne .buf_no_bracket
+    add r12, 80             
+    jmp .loop
+
+.buf_no_bracket:
+    add r12, 64            
+    jmp .loop
+
 .check_print:
     cmp ecx, 5
     jne .check_c_inline
@@ -1676,12 +2527,12 @@ parse_program:
 
 .chk_hlt:
     cmp byte [r8], 'h'
-    jne .check_sys_kw
+    jne .check_outb
     cmp byte [r8 + 1], 'l'
-    jne .check_sys_kw
+    jne .check_outb
     cmp byte [r8 + 2], 't'
     je .is_hlt
-    jmp .check_sys_kw
+    jmp .check_outb
 
 .is_cli:
     cmp byte [is_osdev_mode], 1
@@ -1709,36 +2560,211 @@ parse_program:
 
 .check_outb:
     cmp ecx, 4
-    jne .check_sys_kw
-    cmp byte [r8], 'o'
-    jne .check_sys_kw
-    cmp byte [r8 + 1], 'u'
-    jne .check_sys_kw
-    cmp byte [r8 + 2], 't'
-    jne .check_sys_kw
-    cmp byte [r8 + 3], 'b'
-    jne .check_sys_kw
+    jne .check_dt
+    cmp dword [r8], "outb"
+    je .is_outb_kw
+    cmp dword [r8], "outw"
+    je .is_outw_kw
+    cmp dword [r8], "outd"
+    je .is_outd_kw
+    jmp .check_dt
+
+.is_outb_kw:
+    mov edx, AST_NODE_OUTB
+    jmp .parse_out_generic
+.is_outw_kw:
+    mov edx, AST_NODE_OUTW
+    jmp .parse_out_generic
+.is_outd_kw:
+    mov edx, AST_NODE_OUTD
+
+.parse_out_generic:
+    cmp byte [is_osdev_mode], 1
+    jne .err_osdev_needed
+
+    push rdx
+    add r12, 16                
+    mov eax, dword [r12 + Token.type]
+    cmp eax, TOKEN_DELIMITER
+    jne .pog_no_open_paren
+    mov r9, qword [r12 + Token.ptr]
+    cmp byte [r9], '('
+    jne .pog_no_open_paren
+    add r12, 16
+
+.pog_no_open_paren:
+    call parse_syscall_arg
+    mov qword [r13 + AstNode.left], rdx
+    movzx ebx, al
+
+    mov eax, dword [r12 + Token.type]
+    cmp eax, TOKEN_DELIMITER
+    jne .err_syntax
+    add r12, 16                 
+
+    call parse_syscall_arg
+    mov qword [r13 + AstNode.right], rdx
+    movzx eax, al
+    shl eax, 8
+    or ebx, eax
+    mov dword [r13 + AstNode.len], ebx
+
+    mov eax, dword [r12 + Token.type]
+    cmp eax, TOKEN_DELIMITER
+    jne .pog_done
+    mov r9, qword [r12 + Token.ptr]
+    cmp byte [r9], ')'
+    jne .pog_done
+    add r12, 16
+
+.pog_done:
+    pop rdx
+    mov dword [r13 + AstNode.type], edx
+    add r13, 32
+    jmp .loop
+
+.check_dt:
+    cmp ecx, 4
+    jne .check_cr_write
+    cmp dword [r8], "lidt"
+    je .is_lidt_kw
+    cmp dword [r8], "lgdt"
+    je .is_lgdt_kw
+    jmp .check_cr_write
+
+.is_lidt_kw:
+    mov edx, AST_NODE_LIDT
+    jmp .parse_dt_generic
+.is_lgdt_kw:
+    mov edx, AST_NODE_LGDT
+
+.parse_dt_generic:
+    cmp byte [is_osdev_mode], 1
+    jne .err_osdev_needed
+
+    push rdx
+    add r12, 16                
+    call parse_syscall_arg
+    mov qword [r13 + AstNode.value], rdx
+    movzx eax, al
+    mov dword [r13 + AstNode.len], eax
+
+    pop rdx
+    mov dword [r13 + AstNode.type], edx
+    add r13, 32
+    jmp .loop
+
+.check_cr_write:
+    cmp ecx, 3
+    jne .check_net_kw
+    cmp byte [r8], 'c'
+    jne .check_net_kw
+    cmp byte [r8 + 1], 'r'
+    jne .check_net_kw
 
     cmp byte [is_osdev_mode], 1
     jne .err_osdev_needed
 
-    mov r8, qword [r12 + 32 + Token.ptr]
-    mov edx, dword [r12 + 32 + Token.len]
-    call parse_number_val
+    movzx eax, byte [r8 + 2]
+    sub eax, '0'
     push rax
 
-    mov r8, qword [r12 + 64 + Token.ptr]
-    mov edx, dword [r12 + 64 + Token.len]
-    call parse_number_val
-    mov r9, rax
-    pop rax
+    mov eax, dword [r12 + 16 + Token.type]
+    cmp eax, TOKEN_OPERATOR
+    jne .err_syntax
 
-    mov dword [r13 + AstNode.type], AST_NODE_OUTB
+    mov eax, dword [r12 + 32 + Token.type]
+    cmp eax, TOKEN_REGISTER
+    jne .err_syntax
+
+    mov dword [r13 + AstNode.type], AST_NODE_MOV_TO_CR
+    pop rax
     mov qword [r13 + AstNode.left], rax
-    mov qword [r13 + AstNode.right], r9
+    movzx rax, byte [r12 + 32 + Token.len]
+    mov qword [r13 + AstNode.right], rax
     add r13, 32
-    add r12, 96
+    add r12, 48
     jmp .loop
+
+.check_net_kw:
+    cmp ecx, 3
+    jne .check_sys_kw
+    cmp byte [r8], 'n'
+    jne .check_sys_kw
+    cmp byte [r8 + 1], 'e'
+    jne .check_sys_kw
+    cmp byte [r8 + 2], 't'
+    jne .check_sys_kw
+
+    cmp byte [is_net_mode], 1
+    jne .err_net_needed
+
+    mov eax, dword [r12 + 16 + Token.type]
+    cmp eax, TOKEN_DELIMITER
+    jne .err_syntax
+    mov r9, qword [r12 + 16 + Token.ptr]
+    cmp byte [r9], '.'
+    jne .err_syntax
+
+    mov r8, qword [r12 + 32 + Token.ptr]
+    mov ecx, dword [r12 + 32 + Token.len]
+
+    cmp ecx, 6
+    je .chk_net6
+    cmp ecx, 5
+    je .chk_net5
+    cmp ecx, 4
+    je .chk_net4
+    cmp ecx, 8
+    je .chk_net8
+    jmp .err_syntax
+
+.chk_net8:
+    cmp dword [r8], "send"
+    jne .err_syntax
+    cmp dword [r8 + 4], "file"
+    jne .err_syntax
+    mov dword [r13 + AstNode.type], AST_NODE_NET_SENDFILE
+    jmp .parse_sys_3args_generic
+
+.chk_net6:
+    cmp byte [r8], 'l'
+    je .is_net_listen
+    cmp byte [r8], 'a'
+    je .is_net_accept
+    jmp .err_syntax
+
+.chk_net5:
+    cmp byte [r8], 'c'
+    je .is_net_close
+    jmp .err_syntax
+
+.chk_net4:
+    cmp byte [r8], 's'
+    je .is_net_send
+    cmp byte [r8], 'r'
+    je .is_net_recv
+    jmp .err_syntax
+
+.is_net_listen:
+    mov dword [r13 + AstNode.type], AST_NODE_NET_LISTEN
+    jmp .parse_sys_1arg_generic
+
+.is_net_accept:
+    mov dword [r13 + AstNode.type], AST_NODE_NET_ACCEPT
+    jmp .parse_sys_1arg_generic
+
+.is_net_close:
+    mov dword [r13 + AstNode.type], AST_NODE_NET_CLOSE
+    jmp .parse_sys_1arg_generic
+
+.is_net_send:
+    mov dword [r13 + AstNode.type], AST_NODE_NET_SEND
+    jmp .parse_sys_3args_generic
+
+.is_net_recv:
+    mov dword [r13 + AstNode.type], AST_NODE_NET_RECV
+    jmp .parse_sys_3args_generic
 
 .check_sys_kw:
     cmp ecx, 3
@@ -1755,38 +2781,142 @@ parse_program:
 
     mov r8, qword [r12 + 32 + Token.ptr]
     mov ecx, dword [r12 + 32 + Token.len]
+    
+    cmp ecx, 8
+    je .chk_sys8
+    cmp ecx, 6
+    je .chk_sys6
     cmp ecx, 5
-    je .parse_sys_write
+    je .chk_sys5
     cmp ecx, 4
-    je .parse_sys_read_or_exit
+    je .chk_sys4
     jmp .err_syntax
 
-.parse_sys_write:
-    mov dword [r13 + AstNode.type], AST_NODE_SYS_WRITE
-    jmp .parse_sys_3args
+.chk_sys8:
+    cmp dword [r8], "send"
+    jne .err_syntax
+    cmp dword [r8 + 4], "file"
+    jne .err_syntax
+    mov dword [r13 + AstNode.type], AST_NODE_SYS_SENDFILE
+    jmp .parse_sys_3args_generic
 
-.parse_sys_read_or_exit:
+.chk_sys6:
+    cmp byte [r8], 's'
+    je .is_sys_socket
+    cmp byte [r8], 'l'
+    je .is_sys_listen
+    cmp byte [r8], 'a'
+    je .is_sys_accept
+    jmp .err_syntax
+
+.chk_sys5:
+    cmp byte [r8], 'w'
+    je .parse_sys_write
+    cmp byte [r8], 'c'
+    je .is_sys_close
+    jmp .err_syntax
+
+.chk_sys4:
     cmp byte [r8], 'r'
     je .parse_sys_read
     cmp byte [r8], 'e'
     je .parse_sys_exit
+    cmp byte [r8], 'b'
+    je .is_sys_bind
+    cmp byte [r8], 'o'
+    je .is_sys_open
     jmp .err_syntax
+
+.is_sys_socket:
+    mov dword [r13 + AstNode.type], AST_NODE_SYS_SOCKET
+    jmp .parse_sys_3args_generic
+
+.is_sys_bind:
+    mov dword [r13 + AstNode.type], AST_NODE_SYS_BIND
+    jmp .parse_sys_3args_generic
+
+.is_sys_listen:
+    mov dword [r13 + AstNode.type], AST_NODE_SYS_LISTEN
+    jmp .parse_sys_2args_generic
+
+.is_sys_accept:
+    mov dword [r13 + AstNode.type], AST_NODE_SYS_ACCEPT
+    jmp .parse_sys_3args_generic
+
+.is_sys_close:
+    mov dword [r13 + AstNode.type], AST_NODE_SYS_CLOSE
+    jmp .parse_sys_1arg_generic
+
+.is_sys_open:
+    mov dword [r13 + AstNode.type], AST_NODE_SYS_OPEN
+    jmp .parse_sys_3args_generic
+
+.parse_sys_write:
+    mov dword [r13 + AstNode.type], AST_NODE_SYS_WRITE
+    jmp .parse_sys_3args_generic
 
 .parse_sys_read:
     mov dword [r13 + AstNode.type], AST_NODE_SYS_READ
-.parse_sys_3args:
-    movzx r8, byte [r12 + 64 + Token.len]
-    mov qword [r13 + AstNode.left], r8
+    jmp .parse_sys_3args_generic
 
-    movzx r9, byte [r12 + 96 + Token.len]
-    mov qword [r13 + AstNode.right], r9
-
-    mov r8, qword [r12 + 128 + Token.ptr]
-    mov edx, dword [r12 + 128 + Token.len]
-    call parse_number_val
-    mov qword [r13 + AstNode.value], rax
+.parse_sys_3args_generic:
+    add r12, 64               
+    call parse_syscall_arg
+    mov qword [r13 + AstNode.left], rdx
+    movzx ebx, al
+    add r12, 16              
+    call parse_syscall_arg
+    mov qword [r13 + AstNode.right], rdx
+    movzx eax, al
+    shl eax, 8
+    or ebx, eax
+    add r12, 16               
+    call parse_syscall_arg
+    mov qword [r13 + AstNode.value], rdx
+    movzx eax, al
+    shl eax, 16
+    or ebx, eax
+    mov dword [r13 + AstNode.len], ebx
+    
+    mov eax, dword [r12 + Token.type]
+    cmp eax, TOKEN_DELIMITER
+    jne .err_syntax
+    add r12, 16             
     add r13, 32
-    add r12, 160
+    jmp .loop
+
+.parse_sys_2args_generic:
+    add r12, 64               
+    call parse_syscall_arg
+    mov qword [r13 + AstNode.left], rdx
+    movzx ebx, al
+    add r12, 16              
+    call parse_syscall_arg
+    mov qword [r13 + AstNode.right], rdx
+    movzx eax, al
+    shl eax, 8
+    or ebx, eax
+    mov dword [r13 + AstNode.len], ebx
+
+    mov eax, dword [r12 + Token.type]
+    cmp eax, TOKEN_DELIMITER
+    jne .err_syntax
+    add r12, 16              
+    add r13, 32
+    jmp .loop
+
+.parse_sys_1arg_generic:
+    add r12, 64              
+    call parse_syscall_arg
+    mov qword [r13 + AstNode.left], rdx
+    movzx eax, al
+    mov dword [r13 + AstNode.len], eax
+
+    mov eax, dword [r12 + Token.type]
+    cmp eax, TOKEN_DELIMITER
+    jne .err_syntax
+    add r12, 16             
+    add r13, 32
     jmp .loop
 
 .parse_sys_exit:
@@ -2085,7 +3215,6 @@ parse_program:
     pop r10
     pop r9
     pop rdx
-
     mov dword [r13 + AstNode.type], AST_NODE_STORE_MEM
     mov dword [r13 + AstNode.len], edx
     mov qword [r13 + AstNode.left], r9
@@ -2235,3 +3364,9 @@ parse_program:
     mov rdx, qword [r12 + Token.ptr]
     pop rbp
     ret
+.err_net_needed:
+    mov rax, -9
+    mov rdx, qword [r12 + Token.ptr]
+    pop rbp
+    ret
+

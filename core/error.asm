@@ -1,12 +1,24 @@
 align 8
 
 report_error:
+    cmp rsi, -9
+    jne .chk_e_other
+    cmp byte [lang_ru], 1
+    je .e_net_ru
+    mov rsi, msg_err_net_en
+    mov rdx, msg_err_net_en_len
+    jmp .do_print_err
+.e_net_ru:
+    mov rsi, msg_err_net_ru
+    mov rdx, msg_err_net_ru_len
+    jmp .do_print_err
+.chk_e_other:
     push rbp
     mov rbp, rsp
     push rdi
     push rsi
 
-    mov rsi, src_buf
+    mov rsi, preproc_buf
     mov r8, 1
     mov r9, 1
     mov r10, rsi
@@ -15,8 +27,6 @@ report_error:
     cmp rsi, rdi
     jae .scan_done
     mov al, byte [rsi]
-    test al, al
-    jz .scan_done
     cmp al, 0x0A
     jne .not_nl
     inc r8
@@ -28,7 +38,7 @@ report_error:
     inc r9
     inc rsi
     jmp .scan_loop
-
+    
 .scan_done:
     push r8
     push r9
