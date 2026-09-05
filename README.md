@@ -6,6 +6,9 @@
 
 # RamisScript (RSMC) v0.7.0
 
+#NEW VERSION 0.8.0 WAS AVAILABLE (https://github.com/KVRaMISPG/RamisScript_v0.8.0)
+#ВЫШЛА НОВАЯ ВЕРСИЯ 0.8.0 (https://github.com/KVRaMISPG/RamisScript_v0.8.0)
+
 [English](#english) | [Русский](#русский)
 
 ---
