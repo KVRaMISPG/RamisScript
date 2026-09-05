@@ -1,0 +1,404 @@
+mode "kids"
+mode "vars"
+mode "sys"
+
+main :: sub()
+    mut head_x: qword = 20
+    mut head_y: qword = 12
+    mut dir_x: qword = 1
+    mut dir_y: qword = 0
+    mut food_x: qword = 12
+    mut food_y: qword = 7
+    mut score: qword = 0
+    mut length: qword = 4
+    mut seed: qword = 99
+    mut tail_x: qword = 0
+    mut tail_y: qword = 0
+    mut i: qword = 0
+    mut new_x: qword = 0
+    mut new_y: qword = 0
+    mut wall_y: qword = 3
+
+    buf orig_term: 64
+    buf raw_term: 64
+    buf key_buf: 8
+    buf body_x: 800
+    buf body_y: 800
+
+    # 1. Считываем текущие параметры терминала: ioctl(0, TCGETS=0x5401, &orig_term)
+    rax = 16
+    rdi = 0
+    rsi = 0x5401
+    rdx = &orig_term
+    syscall
+
+    # Копируем orig_term в raw_term (64 байта)
+    rsi = &orig_term
+    rdi = &raw_term
+    rax = [rsi]
+    [rdi] = rax
+    rsi = rsi + 8
+    rdi = rdi + 8
+    rax = [rsi]
+    [rdi] = rax
+    rsi = rsi + 8
+    rdi = rdi + 8
+    rax = [rsi]
+    [rdi] = rax
+    rsi = rsi + 8
+    rdi = rdi + 8
+    rax = [rsi]
+    [rdi] = rax
+    rsi = rsi + 8
+    rdi = rdi + 8
+    rax = [rsi]
+    [rdi] = rax
+    rsi = rsi + 8
+    rdi = rdi + 8
+    rax = [rsi]
+    [rdi] = rax
+    rsi = rsi + 8
+    rdi = rdi + 8
+    rax = [rsi]
+    [rdi] = rax
+    rsi = rsi + 8
+    rdi = rdi + 8
+    rax = [rsi]
+    [rdi] = rax
+
+    # Отключаем ICANON и ECHO в c_lflag (смещение 12): обнуляем младший байт
+    rdi = &raw_term
+    rdi = rdi + 12
+    byte [rdi] = 0
+
+    # Отключаем блокировку ввода: VTIME (смещение 22) = 0, VMIN (смещение 23) = 0
+    rdi = &raw_term
+    rdi = rdi + 22
+    byte [rdi] = 0
+    rdi = &raw_term
+    rdi = rdi + 23
+    byte [rdi] = 0
+
+    # Применяем Raw Mode: ioctl(0, TCSETS=0x5402, &raw_term)
+    rax = 16
+    rdi = 0
+    rsi = 0x5402
+    rdx = &raw_term
+    syscall
+
+    # Начальные координаты сегментов змейки
+    rdi = &body_x
+    rax = 19
+    [rdi] = rax
+    rdi = &body_y
+    rax = 12
+    [rdi] = rax
+
+    rdi = &body_x
+    rdi = rdi + 8
+    rax = 18
+    [rdi] = rax
+    rdi = &body_y
+    rdi = rdi + 8
+    rax = 12
+    [rdi] = rax
+
+    rdi = &body_x
+    rdi = rdi + 16
+    rax = 17
+    [rdi] = rax
+    rdi = &body_y
+    rdi = rdi + 16
+    rax = 12
+    [rdi] = rax
+
+    cls
+    hide_cursor
+
+    # Отрисовка арены
+    color("blue")
+    locate(2, 2)
+    say "+--------------------------------------+"
+    locate(2, 22)
+    say "+--------------------------------------+"
+
+@draw_walls:
+    locate(2, wall_y)
+    say "|"
+    locate(41, wall_y)
+    say "|"
+    rax = wall_y
+    rax = rax + 1
+    wall_y = rax
+    cmp rax, 22
+    jl @draw_walls
+
+    # Первое яблоко
+    color("red")
+    locate(food_x, food_y)
+    say "*"
+
+    # Интерфейс
+    color("cyan")
+    locate(45, 4)
+    say "=== RAMIS SNAKE ==="
+    locate(45, 6)
+    say "Controls: W A S D"
+    locate(45, 7)
+    say "Exit: Q"
+    locate(45, 9)
+    say "SCORE:"
+    locate(52, 9)
+    say_num(score)
+
+@game_loop:
+    # 1. Неблокирующее чтение клавиши (0 байт если ничего не нажато)
+    rdi = &key_buf
+    rax = 0
+    [rdi] = rax
+
+    sys.read(0, &key_buf, 1)
+    cmp rax, 1
+    jne @apply_movement
+
+    rdi = &key_buf
+    rax = [rdi]
+
+    cmp rax, 0x77              # 'w'
+    je @set_up
+    cmp rax, 0x73              # 's'
+    je @set_down
+    cmp rax, 0x61              # 'a'
+    je @set_left
+    cmp rax, 0x64              # 'd'
+    je @set_right
+    cmp rax, 0x71              # 'q'
+    je @exit_game
+    jmp @apply_movement
+
+@set_up:
+    rax = dir_y
+    cmp rax, 1
+    je @apply_movement
+    dir_x = 0
+    rax = 0
+    rax = rax - 1
+    dir_y = rax
+    jmp @apply_movement
+
+@set_down:
+    rax = dir_y
+    rbx = 0
+    rbx = rbx - 1
+    cmp rax, rbx
+    je @apply_movement
+    dir_x = 0
+    dir_y = 1
+    jmp @apply_movement
+
+@set_left:
+    rax = dir_x
+    cmp rax, 1
+    je @apply_movement
+    rax = 0
+    rax = rax - 1
+    dir_x = rax
+    dir_y = 0
+    jmp @apply_movement
+
+@set_right:
+    rax = dir_x
+    rbx = 0
+    rbx = rbx - 1
+    cmp rax, rbx
+    je @apply_movement
+    dir_x = 1
+    dir_y = 0
+    jmp @apply_movement
+
+@apply_movement:
+    # new_x = head_x + dir_x
+    rax = head_x
+    rbx = dir_x
+    rax = rax + rbx
+    new_x = rax
+
+    # new_y = head_y + dir_y
+    rax = head_y
+    rbx = dir_y
+    rax = rax + rbx
+    new_y = rax
+
+    # Проверка столкновения со стенами
+    rax = new_x
+    cmp rax, 2
+    jle @exit_game
+    cmp rax, 41
+    jge @exit_game
+
+    rax = new_y
+    cmp rax, 2
+    jle @exit_game
+    cmp rax, 22
+    jge @exit_game
+
+    # Проверка съедания яблока
+    rax = new_x
+    rbx = food_x
+    cmp rax, rbx
+    jne @no_food
+    rax = new_y
+    rbx = food_y
+    cmp rax, rbx
+    jne @no_food
+
+    # Яблоко съедено
+    beep
+    rax = score
+    rax = rax + 10
+    score = rax
+
+    rax = length
+    cmp rax, 80
+    jge @gen_food
+    rax = rax + 1
+    length = rax
+
+@gen_food:
+    # Генератор позиции яблока
+    rax = seed
+    rax = rax * 37
+    rax = rax + 11
+    seed = rax
+    rbx = rax
+    rbx = rbx & 31
+    rbx = rbx + 5
+    food_x = rbx
+
+    rax = seed
+    rax = rax * 23
+    rax = rax + 7
+    seed = rax
+    rbx = rax
+    rbx = rbx & 15
+    rbx = rbx + 4
+    food_y = rbx
+
+    color("red")
+    locate(food_x, food_y)
+    say "*"
+
+    color("white")
+    locate(52, 9)
+    say_num(score)
+    jmp @shift_snake_body
+
+@no_food:
+    # Стираем старый хвост змейки
+    rbx = length
+    rbx = rbx - 1
+    rbx = rbx * 8
+
+    rsi = &body_x
+    rsi = rsi + rbx
+    rax = [rsi]
+    tail_x = rax
+
+    rsi = &body_y
+    rsi = rsi + rbx
+    rax = [rsi]
+    tail_y = rax
+
+    locate(tail_x, tail_y)
+    say " "
+
+@shift_snake_body:
+    rax = length
+    rax = rax - 1
+    i = rax
+
+@body_loop:
+    rax = i
+    cmp rax, 0
+    jle @body_loop_end
+
+    rdx = i
+    rdx = rdx - 1
+    rdx = rdx * 8
+
+    rcx = i
+    rcx = rcx * 8
+
+    rsi = &body_x
+    rsi = rsi + rdx
+    rax = [rsi]
+    rdi = &body_x
+    rdi = rdi + rcx
+    [rdi] = rax
+
+    rsi = &body_y
+    rsi = rsi + rdx
+    rax = [rsi]
+    rdi = &body_y
+    rdi = rdi + rcx
+    [rdi] = rax
+
+    rax = i
+    rax = rax - 1
+    i = rax
+    jmp @body_loop
+
+@body_loop_end:
+    rdi = &body_x
+    rax = head_x
+    [rdi] = rax
+    rdi = &body_y
+    rax = head_y
+    [rdi] = rax
+
+    # Отрисовка тела
+    color("green")
+    locate(head_x, head_y)
+    say "o"
+
+    # Отрисовка головы
+    rax = new_x
+    head_x = rax
+    rax = new_y
+    head_y = rax
+
+    color("yellow")
+    locate(head_x, head_y)
+    say "@"
+
+    # Скорость шага: 85 мс
+    sleep(85)
+    jmp @game_loop
+
+@exit_game:
+    # Восстанавливаем настройки терминала
+    rax = 16
+    rdi = 0
+    rsi = 0x5402
+    rdx = &orig_term
+    syscall
+
+    color("reset")
+    show_cursor
+    cls
+    locate(12, 9)
+    color("red")
+    say "========================================"
+    locate(12, 10)
+    say "               GAME OVER                "
+    locate(12, 11)
+    say "========================================"
+    locate(12, 13)
+    color("cyan")
+    say "YOUR FINAL SCORE:"
+    locate(30, 13)
+    color("white")
+    say_num(score)
+    color("reset")
+    locate(1, 16)
+end

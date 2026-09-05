@@ -1,0 +1,207 @@
+mode "net"
+mode "sys"
+mode "vars"
+
+main :: sub()
+    mut server: qword = 0
+    mut client: qword = 0
+    mut fd: qword = 0
+    buf sigact: 32
+    buf req: 1024
+    buf f_html: 16
+    buf f_css: 16
+    buf f_js: 16
+    buf h_html: 128
+    buf h_css: 128
+    buf h_js: 128
+
+    # 1. Подавление SIGPIPE: rt_sigaction(SIGPIPE=13, &sigact, 0, 8)
+    rdi = &sigact
+    rax = 1                    # SA_IGN
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0
+    [rdi] = rax
+    rdi = rdi + 8
+    [rdi] = rax
+    rdi = rdi + 8
+    [rdi] = rax
+
+    rax = 13
+    rdi = 13
+    rsi = &sigact
+    rdx = 0
+    r10 = 8
+    syscall
+
+    # 2. Имена файлов с нулевым байтом
+    # f_html (index.html)
+    rdi = &f_html
+    rax = 0x74682E7865646E69
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x0000000000006C6D
+    [rdi] = rax
+
+    # f_css (style.css)
+    rdi = &f_css
+    rax = 0x73632E656C797473
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x0000000000000073
+    [rdi] = rax
+
+    # f_js (app.js)
+    rdi = &f_js
+    rax = 0x0000736A2E707061
+    [rdi] = rax
+
+    # 3. HTTP-заголовки без единого нулевого байта
+    # h_html (72 байт)
+    rdi = &h_html
+    rax = 0x312E312F50545448
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x0D4B4F2030303220
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x746E65746E6F430A
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x74203A657079542D
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x6C6D74682F747865
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x63656E6E6F430A0D
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x6C63203A6E6F6974
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x502D580A0D65736F
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x0A0D0A0D203A6461
+    [rdi] = rax
+
+    # h_css (72 байт)
+    rdi = &h_css
+    rax = 0x312E312F50545448
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x0D4B4F2030303220
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x746E65746E6F430A
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x74203A657079542D
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x0D7373632F747865
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x7463656E6E6F430A
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x6F6C63203A6E6F69
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x61502D580A0D6573
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x0A0D0A0D58203A64
+    [rdi] = rax
+
+    # h_js (88 байт)
+    rdi = &h_js
+    rax = 0x312E312F50545448
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x0D4B4F2030303220
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x746E65746E6F430A
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x61203A657079542D
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x69746163696C7070
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x736176616A2F6E6F
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x430A0D7470697263
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x6F697463656E6E6F
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x65736F6C63203A6E
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x3A6461502D580A0D
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x0A0D0A0D58585820
+    [rdi] = rax
+
+    # 4. Открываем сокет на порту 8080
+    net.listen(8080)
+    server = rax
+
+@loop:
+    net.accept(server)
+    client = rax
+
+    # Читаем HTTP-запрос от браузера
+    net.recv(client, &req, 1024)
+
+    # Проверяем 5-й байт запроса ("GET /x..."):
+    rdi = &req
+    rax = [rdi]
+    rax = rax >> 40
+    rax = rax & 0xFF
+
+    cmp rax, 0x73              # "s" -> style.css
+    je @send_css
+    cmp rax, 0x61              # "a" -> app.js
+    je @send_js
+
+@send_html:
+    net.send(client, &h_html, 72)
+    sys.open(&f_html, 0, 0)
+    fd = rax
+    cmp rax, 0
+    jl @done_req
+    net.sendfile(client, fd, 4096)
+    sys.close(fd)
+    jmp @done_req
+
+@send_css:
+    net.send(client, &h_css, 72)
+    sys.open(&f_css, 0, 0)
+    fd = rax
+    cmp rax, 0
+    jl @done_req
+    net.sendfile(client, fd, 4096)
+    sys.close(fd)
+    jmp @done_req
+
+@send_js:
+    net.send(client, &h_js, 88)
+    sys.open(&f_js, 0, 0)
+    fd = rax
+    cmp rax, 0
+    jl @done_req
+    net.sendfile(client, fd, 4096)
+    sys.close(fd)
+
+@done_req:
+    net.close(client)
+    jmp @loop
+end

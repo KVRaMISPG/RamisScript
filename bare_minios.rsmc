@@ -1,0 +1,53 @@
+mode "osdev"
+mode "vars"
+
+main :: sub()
+    mut vga: qword = 0xB8000
+
+    cli
+
+    rdi = vga
+    rax = 0x1F201F201F201F20
+    rcx = 0
+@clear_loop:
+    [rdi] = rax
+    rdi = rdi + 8
+    rcx = rcx + 1
+    cmp rcx, 500
+    jl @clear_loop
+
+    rdi = 0xB8168
+    rax = 0x1F431F4D1F531F52
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x1F201F531F4F1F2D
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x1F301F2E1F311F76
+    [rdi] = rax
+
+    rdi = 0xB8298
+    rax = 0x1A5D1A4B1A4F1A5B
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x1F691F521F201F20
+    [rdi] = rax
+    rdi = rdi + 8
+    rax = 0x1F301F201F671F6E
+    [rdi] = rax
+
+    outb(0x3F8, 0x52)
+    outb(0x3F8, 0x53)
+    outb(0x3F8, 0x4D)
+    outb(0x3F8, 0x43)
+    outb(0x3F8, 0x2D)
+    outb(0x3F8, 0x4F)
+    outb(0x3F8, 0x53)
+    outb(0x3F8, 0x20)
+    outb(0x3F8, 0x4F)
+    outb(0x3F8, 0x4B)
+    outb(0x3F8, 0x0A)
+
+@halt_loop:
+    jmp @halt_loop
+end

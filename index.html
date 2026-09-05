@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>RamisScript 0.8.0 Engine</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="card">
+        <div class="badge">● RSMC 0.8.0 ACTIVE</div>
+        <h1>RamisScript Engine</h1>
+        <p class="desc">Нативный веб-сервер без libc на базе Linux zero-copy <code>net.sendfile</code>.</p>
+        <div class="stats">
+            <div class="stat-box">
+                <span class="stat-label">Стек</span>
+                <span class="stat-val">Zero-Libc x86-64</span>
+            </div>
+            <div class="stat-box">
+                <span class="stat-label">Время работы</span>
+                <span class="stat-val" id="timer">0.0s</span>
+            </div>
+        </div>
+        <button id="pingBtn" onclick="testPing()">Отправить сигнал ядру</button>
+        <div id="log">Ожидание взаимодействия...</div>
+    </div>
+    <script src="/app.js"></script>
+</body>
+</html>
